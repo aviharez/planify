@@ -878,7 +878,7 @@ function KrsStep({
                       key={label}
                       role="listitem"
                       aria-current={current ? "step" : undefined}
-                      className={`accordion-panel min-w-0 flex-1 rounded-xl border p-3 ${completed ? "border-moss/30 bg-sage/40 text-moss" : current ? "border-coral/40 bg-coral/5 text-ink" : "border-ink/10 bg-cream/60 text-ink/40"}`}
+                      className={`min-w-0 flex-1 rounded-xl border p-3 ${completed ? "border-moss/30 bg-sage/40 text-moss" : current ? "border-coral/40 bg-coral/5 text-ink" : "border-ink/10 bg-cream/60 text-ink/40"}`}
                     >
                       <div className="flex items-center gap-3">
                         {completed ? (
@@ -2456,7 +2456,7 @@ export default function OnboardingApp() {
               Planify
             </header>
             <p className="mt-20 text-sm font-semibold text-coral">
-              Teman belajar yang menyesuaikan
+              Teman belajar yang adaptif
             </p>
             <h1 className="mt-5 max-w-6xl text-[clamp(3rem,7vw,6.5rem)] font-bold leading-[0.91] tracking-[-0.08em]">
               <span data-reveal-word>Belajar</span> dengan{" "}

@@ -2,7 +2,7 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Planify — Teman belajar yang menyesuaikan",
+    name: "Planify — Teman belajar yang adaptif",
     short_name: "Planify",
     description: "Rencana belajar yang terasa mungkin untuk minggu kamu.",
     start_url: "/hari-ini",

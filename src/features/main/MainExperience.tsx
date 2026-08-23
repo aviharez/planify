@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
-import { ArrowRight, ChevronRight, Leaf, LogOut, RotateCcw } from "lucide-react";
+import { ArrowRight, BarChart3, BookOpen, CalendarDays, ChevronRight, Leaf, ListChecks, LogOut, RotateCcw, UserRound } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { dateInTimeZone } from "@/features/planning/priority";
 import type { OnboardingData, StudySession, StudySessionStatus } from "@/features/onboarding/types";
@@ -65,25 +65,34 @@ function MotionReveal({ children }: { children: React.ReactNode }) {
   return <div ref={root}>{children}</div>;
 }
 
+const navigationItems = [
+  { key: "hari-ini", label: "Hari Ini", mobileLabel: "Hari", href: "/hari-ini", icon: CalendarDays },
+  { key: "rencana", label: "Rencana", mobileLabel: "Rencana", href: "/rencana", icon: ListChecks },
+  { key: "mata-kuliah", label: "Mata Kuliah", mobileLabel: "Kuliah", href: "/mata-kuliah", icon: BookOpen },
+  { key: "progres", label: "Progres", mobileLabel: "Progres", href: "/progres", icon: BarChart3 },
+  { key: "profil", label: "Profil", mobileLabel: "Profil", href: "/profil", icon: UserRound },
+] as const;
+
 function MainNavigation({ view }: { view: MainView }) {
   return (
-    <nav aria-label="Navigasi utama" className="fixed inset-x-4 bottom-4 z-20 mx-auto flex max-w-3xl items-center justify-start gap-1 overflow-x-auto rounded-2xl border border-ink/10 bg-cream/95 p-2 shadow-soft backdrop-blur sm:inset-x-auto sm:right-8 sm:left-auto sm:top-8 sm:bottom-auto sm:max-w-none">
-      {[
-        ["hari-ini", "Hari Ini", "/hari-ini"],
-        ["rencana", "Rencana", "/rencana"],
-        ["mata-kuliah", "Mata Kuliah", "/mata-kuliah"],
-        ["progres", "Progres", "/progres"],
-        ["profil", "Profil", "/profil"],
-      ].map(([key, label, href]) => (
+    <nav aria-label="Navigasi utama" className="fixed inset-x-3 bottom-[calc(1rem+env(safe-area-inset-bottom))] z-20 mx-auto max-w-3xl rounded-2xl border border-ink/10 bg-cream/95 p-2 shadow-soft backdrop-blur lg:inset-x-auto lg:bottom-[calc(1.5rem+env(safe-area-inset-bottom))] lg:left-1/2 lg:w-[min(44rem,calc(100vw-2rem))] lg:-translate-x-1/2 lg:rounded-[1.5rem] lg:border-cream/15 lg:bg-ink/90 lg:p-2.5 lg:shadow-[0_18px_60px_rgba(23,37,31,.28)] lg:backdrop-blur-xl">
+      <span aria-hidden="true" className="pointer-events-none absolute inset-x-16 -top-5 hidden h-10 rounded-full bg-moss/35 blur-2xl lg:block" />
+      <div className="relative grid min-w-0 grid-flow-dense grid-cols-5 gap-1 lg:gap-1.5">
+        {navigationItems.map(({ key, label, mobileLabel, href, icon: Icon }) => (
         <a
           key={key}
           href={href}
-          className={`min-h-11 shrink-0 whitespace-nowrap rounded-xl px-2 text-xs font-semibold transition sm:px-4 sm:text-sm ${view === key ? "bg-moss text-cream" : "text-ink/60 hover:bg-sage/60 hover:text-ink"}`}
+          aria-label={label}
+          title={label}
+          className={`inline-flex min-h-11 min-w-0 flex-col items-center justify-center gap-1 rounded-xl px-1 py-1 text-[10px] font-semibold leading-none transition sm:px-2 sm:text-xs lg:flex-row lg:justify-center lg:gap-2 lg:px-3 lg:py-3 lg:text-sm lg:leading-normal lg:transition-[transform,background-color,color] lg:duration-200 lg:ease-out lg:hover:-translate-y-0.5 lg:hover:scale-[1.02] ${view === key ? "bg-moss text-cream lg:bg-cream lg:text-ink" : "text-ink/60 hover:bg-sage/60 hover:text-ink lg:text-cream/75 lg:hover:bg-cream/10 lg:hover:text-cream"}`}
           aria-current={view === key ? "page" : undefined}
         >
-          {label}
+          <Icon size={17} strokeWidth={2} aria-hidden="true" />
+          <span className="truncate lg:hidden">{mobileLabel}</span>
+          <span className="hidden lg:inline">{label}</span>
         </a>
       ))}
+      </div>
     </nav>
   );
 }
@@ -257,7 +266,7 @@ function CoursesView({ data, onLogout }: { data: MainData; onLogout: () => void 
   );
 }
 
-function SessionView({ data, sessionKey, onSave }: { data: MainData; sessionKey: string; onSave: (sessionKey: string, status: Exclude<StudySessionStatus, "planned">, feedback?: { reason?: string; understanding?: number }) => Promise<{ ok: boolean; message: string }> }) {
+function SessionView({ data, sessionKey, onSave, onLogout }: { data: MainData; sessionKey: string; onSave: (sessionKey: string, status: Exclude<StudySessionStatus, "planned">, feedback?: { reason?: string; understanding?: number }) => Promise<{ ok: boolean; message: string }>; onLogout: () => void }) {
   const setup = data.setup;
   const session = setup.studyPlan!.sessions.find((item) => item.sessionKey === sessionKey);
   const [pendingStatus, setPendingStatus] = useState<Exclude<StudySessionStatus, "planned"> | null>(null);
@@ -265,7 +274,7 @@ function SessionView({ data, sessionKey, onSave }: { data: MainData; sessionKey:
   const [understanding, setUnderstanding] = useState<number>();
   const [message, setMessage] = useState("");
   const completedCount = setup.studyPlan!.sessions.filter((item) => item.status === "completed").length;
-  if (!session) return <PageFrame data={data} view="sesi" onLogout={() => undefined}><p className="rounded-2xl bg-white/70 p-6">Sesi tidak ditemukan.</p></PageFrame>;
+  if (!session) return <PageFrame data={data} view="sesi" onLogout={onLogout}><p className="rounded-2xl bg-white/70 p-6">Sesi tidak ditemukan.</p></PageFrame>;
   const selectedSession = session;
   const reasons = ["Tidak cukup waktu", "Terlalu lelah", "Materinya terasa sulit", "Lupa", "Ada kegiatan mendadak", "Lainnya"];
   async function submit(status: Exclude<StudySessionStatus, "planned">, selectedReason?: string, selectedUnderstanding?: number) {
@@ -276,7 +285,7 @@ function SessionView({ data, sessionKey, onSave }: { data: MainData; sessionKey:
     if (result.ok) setPendingStatus(null);
   }
   return (
-    <PageFrame data={data} view="sesi" onLogout={() => undefined} hideNavigation>
+    <PageFrame data={data} view="sesi" onLogout={onLogout} hideNavigation>
       <MotionReveal>
         <a href="/hari-ini" className="inline-flex items-center gap-2 text-sm font-semibold text-moss hover:text-coral"><RotateCcw size={15} /> Kembali ke Hari Ini</a>
         <section className="mt-8 grid gap-6 lg:grid-cols-[.42fr_1fr]" data-main-reveal>
@@ -290,7 +299,7 @@ function SessionView({ data, sessionKey, onSave }: { data: MainData; sessionKey:
 
 function PageFrame({ data, view, onLogout, hideNavigation = false, children }: { data: MainData; view: MainView; onLogout: () => void; hideNavigation?: boolean; children: React.ReactNode }) {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
-  return <main className="min-h-screen overflow-x-hidden bg-cream px-4 pb-28 pt-5 text-ink sm:px-8 sm:pb-12 sm:pt-8"><div className="mx-auto max-w-6xl"><header className="flex items-center justify-between gap-4"><a href="/hari-ini" className="flex items-center gap-2 text-lg font-bold tracking-[-0.04em]"><span className="grid h-9 w-9 place-items-center rounded-xl bg-moss text-cream"><Leaf size={18} /></span>Planify</a><div className="flex items-center gap-3"><span className="hidden text-xs text-ink/50 sm:inline">{data.setup.timezone}</span>{supabase && <button type="button" onClick={onLogout} className="flex min-h-10 items-center gap-2 rounded-xl border border-ink/15 bg-white/70 px-3 text-sm font-semibold hover:bg-sage"><LogOut size={15} /> Keluar</button>}</div></header><div className="mt-10">{children}</div></div>{!hideNavigation && <MainNavigation view={view} />}</main>;
+  return <main className="min-h-screen max-w-full overflow-x-hidden bg-cream px-4 pb-[calc(7rem+env(safe-area-inset-bottom))] pt-5 text-ink sm:px-8 sm:pt-8 lg:px-10 lg:pb-[calc(9rem+env(safe-area-inset-bottom))] lg:pt-5"><div className="mx-auto max-w-6xl"><header className="flex items-center justify-between gap-4 lg:border-b lg:border-ink/10 lg:pb-6"><a href="/hari-ini" className="flex items-center gap-2 text-lg font-bold tracking-[-0.04em] transition hover:text-moss"><span className="grid h-9 w-9 place-items-center rounded-xl bg-moss text-cream"><Leaf size={18} /></span>Planify</a><div className="flex items-center gap-3"><span className="hidden text-xs text-ink/50 sm:inline" title={data.setup.timezone}>{data.setup.timezone}</span>{supabase && <button type="button" onClick={onLogout} className="flex min-h-10 items-center gap-2 rounded-xl border border-ink/15 bg-white/70 px-3 text-sm font-semibold transition hover:bg-sage"><LogOut size={15} aria-hidden="true" /> Keluar</button>}</div></header>{!hideNavigation && <MainNavigation view={view} />}<div className="mt-10">{children}</div></div></main>;
 }
 
 export default function MainExperience({ view, sessionKey }: { view: MainView; sessionKey?: string }) {
@@ -355,7 +364,7 @@ export default function MainExperience({ view, sessionKey }: { view: MainView; s
     const supabase = createSupabaseBrowserClient();
     void supabase?.auth.signOut().finally(() => window.location.replace("/"));
   }
-  if (view === "sesi") return <SessionView data={data} sessionKey={sessionKey ? decodeURIComponent(sessionKey) : ""} onSave={saveSession} />;
+  if (view === "sesi") return <SessionView data={data} sessionKey={sessionKey ? decodeURIComponent(sessionKey) : ""} onSave={saveSession} onLogout={logout} />;
   if (view === "progres") return <PageFrame data={data} view={view} onLogout={logout}><MotionReveal><ProgressView data={data} /></MotionReveal></PageFrame>;
   if (view === "profil") return <PageFrame data={data} view={view} onLogout={logout}><MotionReveal><ProfileView data={data} /></MotionReveal></PageFrame>;
   return view === "rencana" ? <PlanView data={data} onLogout={logout} onAdapt={adaptPlan} /> : view === "mata-kuliah" ? <CoursesView data={data} onLogout={logout} /> : <TodayView data={data} onLogout={logout} />;

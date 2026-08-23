@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Planify — Teman belajar yang menyesuaikan",
+  title: "Planify — Teman belajar yang adaptif",
   description:
     "Siapkan prioritas belajar yang terasa masuk akal untuk minggu kamu.",
   manifest: "/manifest.webmanifest",
