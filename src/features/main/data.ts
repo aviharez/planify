@@ -89,6 +89,21 @@ export async function loadMainData(): Promise<MainData | null> {
   const parsedSessions = z.array(remoteSessionSchema).safeParse(remoteSessions ?? []);
   if (!parsedSessions.success || parsedSessions.data.length === 0)
     return { setup: { ...setup, studyPlan: { ...setup.studyPlan, remoteId: remotePlan.id } }, authenticated: true, remotePlanId: remotePlan.id };
+  const { data: remoteFeedback } = await supabase
+    .from("session_feedback")
+    .select("study_session_id, reason, understanding, recorded_at")
+    .in("study_session_id", parsedSessions.data.map((session) => session.id))
+    .order("recorded_at", { ascending: false });
+  const feedbackBySession = new Map<string, { reason?: string; understanding?: number; recordedAt: string }>();
+  for (const feedback of remoteFeedback ?? []) {
+    if (!feedbackBySession.has(feedback.study_session_id)) {
+      feedbackBySession.set(feedback.study_session_id, {
+        reason: feedback.reason ?? undefined,
+        understanding: feedback.understanding ?? undefined,
+        recordedAt: feedback.recorded_at,
+      });
+    }
+  }
   const sessions: StudySession[] = parsedSessions.data.map((session) => ({
     id: session.session_key,
     sessionKey: session.session_key,
@@ -107,6 +122,7 @@ export async function loadMainData(): Promise<MainData | null> {
     completedAt: session.completed_at ?? undefined,
     sourceSessionId: session.source_session_id ?? undefined,
     changeReason: session.change_reason ?? undefined,
+    feedback: feedbackBySession.get(session.id),
   }));
   const studyPlan: StudyPlan = {
     ...setup.studyPlan,

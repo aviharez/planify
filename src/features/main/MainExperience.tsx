@@ -12,8 +12,9 @@ import { persistAdaptedPlan, saveWeeklyEvaluation } from "@/app/actions/adaptati
 import { adaptStudyPlan, type WeeklyEvaluation } from "@/features/planning/adaptation";
 import { canTransitionSession, shouldAskUnderstanding, transitionSession } from "@/features/study-session/state";
 import { loadMainData, saveLocalMainData, type MainData } from "./data";
+import ProgressView from "@/features/progress/ProgressView";
 
-type MainView = "hari-ini" | "rencana" | "mata-kuliah" | "sesi";
+type MainView = "hari-ini" | "rencana" | "mata-kuliah" | "progres" | "profil" | "sesi";
 
 function formatDate(date: string, timeZone: string, options: Intl.DateTimeFormatOptions = { weekday: "long", day: "numeric", month: "long" }) {
   return new Intl.DateTimeFormat("id-ID", { ...options, timeZone }).format(new Date(`${date}T12:00:00Z`));
@@ -70,6 +71,8 @@ function MainNavigation({ view }: { view: MainView }) {
         ["hari-ini", "Hari Ini", "/hari-ini"],
         ["rencana", "Rencana", "/rencana"],
         ["mata-kuliah", "Mata Kuliah", "/mata-kuliah"],
+        ["progres", "Progres", "/progres"],
+        ["profil", "Profil", "/profil"],
       ].map(([key, label, href]) => (
         <a
           key={key}
@@ -352,5 +355,6 @@ export default function MainExperience({ view, sessionKey }: { view: MainView; s
     void supabase?.auth.signOut().finally(() => window.location.replace("/"));
   }
   if (view === "sesi") return <SessionView data={data} sessionKey={sessionKey ? decodeURIComponent(sessionKey) : ""} onSave={saveSession} />;
+  if (view === "progres") return <PageFrame data={data} view={view} onLogout={logout}><MotionReveal><ProgressView data={data} /></MotionReveal></PageFrame>;
   return view === "rencana" ? <PlanView data={data} onLogout={logout} onAdapt={adaptPlan} /> : view === "mata-kuliah" ? <CoursesView data={data} onLogout={logout} /> : <TodayView data={data} onLogout={logout} />;
 }
