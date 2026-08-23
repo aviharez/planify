@@ -64,6 +64,11 @@ import {
   calculatePriority,
 } from "@/features/planning/priority";
 import { generateStudyPlan } from "@/features/planning/scheduling";
+import {
+  applyEnrichments,
+  enrichStudySessionsResultSchema,
+  fallbackEnrichments,
+} from "@/features/ai/provider";
 
 gsap.registerPlugin(ScrollTrigger);
 
@@ -2039,6 +2044,12 @@ function PlanReady({
             {new Intl.DateTimeFormat("id-ID", { weekday: "long", day: "numeric", month: "long" }).format(new Date(`${nextSession.date}T00:00:00`))}
             {" · "}{nextSession.startTime} · {nextSession.duration} menit
           </p>
+          {nextSession.studyMethod && (
+            <p className="mt-3 text-sm font-semibold text-moss">{nextSession.studyMethod}</p>
+          )}
+          {nextSession.studyGoal && (
+            <p className="mt-1 text-sm leading-6 text-ink/65">{nextSession.studyGoal}</p>
+          )}
         </div>
       )}
       <div className="mt-8 flex flex-col gap-3 sm:flex-row">
@@ -2279,7 +2290,7 @@ export default function OnboardingApp() {
     setGenerationStatus("processing");
     const today = dateInTimeZone(new Date(), data.timezone);
     const snapshot = buildPlanningSnapshot(data, { today });
-    const plan = generateStudyPlan({
+  const generatedPlan = generateStudyPlan({
       courses: data.courses,
       availability: data.availability,
       classSchedules: data.classSchedules,
@@ -2291,6 +2302,13 @@ export default function OnboardingApp() {
       snapshot,
       today,
     });
+    const plan: StudyPlan = {
+      ...generatedPlan,
+      sessions: applyEnrichments(
+        generatedPlan.sessions,
+        fallbackEnrichments(generatedPlan.sessions),
+      ),
+    };
     setData((current) => ({
       ...current,
       planActive: true,
@@ -2303,13 +2321,50 @@ export default function OnboardingApp() {
         const snapshotWarning = await storePlanningSnapshot(supabase, snapshot);
         const storedPlan = await storeStudyPlan(supabase, plan);
         warning = snapshotWarning || storedPlan.warning;
-        if (storedPlan.remoteId)
+        if (storedPlan.remoteId) {
           setData((current) => ({
             ...current,
             studyPlan: current.studyPlan
               ? { ...current.studyPlan, remoteId: storedPlan.remoteId }
               : current.studyPlan,
           }));
+          try {
+            const response = await fetch("/api/ai/enrich", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                planId: storedPlan.remoteId,
+                sessions: plan.sessions.map((session) => ({
+                  sessionKey: session.sessionKey,
+                  courseName: session.courseName,
+                  date: session.date,
+                  duration: session.duration,
+                  priorityScore: session.prioritySnapshot.score,
+                  knowledgeGap: session.prioritySnapshot.knowledgeGap,
+                  difficulty: session.prioritySnapshot.difficulty,
+                  urgency: session.prioritySnapshot.urgency,
+                })),
+              }),
+            });
+            if (response.ok) {
+              const body = (await response.json()) as unknown;
+              const enrichment = enrichStudySessionsResultSchema.safeParse(body);
+              if (enrichment.success) {
+                const enrichedSessions = applyEnrichments(plan.sessions, enrichment.data);
+                setData((current) => ({
+                  ...current,
+                  studyPlan: current.studyPlan
+                    ? { ...current.studyPlan, sessions: enrichedSessions }
+                    : current.studyPlan,
+                }));
+              }
+              if ((body as { fallback?: boolean }).fallback)
+                warning = "Strategi belajar bawaan digunakan. Rencana tetap siap dipakai.";
+            }
+          } catch {
+            warning = "Strategi belajar AI belum tersedia. Rencana tetap siap dipakai dengan panduan bawaan.";
+          }
+        }
       } catch {
         warning = "Rencana tersusun, tetapi belum berhasil disimpan ke akun. Data lokal tetap aman.";
       }
