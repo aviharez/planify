@@ -4,7 +4,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Planify — Teman belajar yang menyesuaikan",
   description:
-    "Siapkan rencana belajar yang terasa masuk akal untuk minggu kamu.",
+    "Siapkan prioritas belajar yang terasa masuk akal untuk minggu kamu.",
 };
 
 export default function RootLayout({

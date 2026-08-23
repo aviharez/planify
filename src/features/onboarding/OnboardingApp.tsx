@@ -51,7 +51,17 @@ import {
   onboardingDataSchema,
   previousStep,
 } from "./state";
-import { withMockCourses } from "./mock-data";
+import {
+  extractKrsFile,
+  KrsExtractionService,
+  type ExtractionProgress,
+} from "@/features/krs/extraction";
+import {
+  buildPlanningSnapshot,
+  dateInTimeZone,
+  rankPriorities,
+  calculatePriority,
+} from "@/features/planning/priority";
 
 gsap.registerPlugin(ScrollTrigger);
 
@@ -171,7 +181,7 @@ function ReflectionCarousel() {
     ],
     [
       "Jelas sejak awal",
-      "Setiap pilihanmu terlihat kembali sebelum rencana belajar dibuat.",
+      "Setiap pilihanmu terlihat kembali sebelum prioritas dihitung.",
     ],
   ];
   const [title, body] = reflections[index];
@@ -463,26 +473,129 @@ function StepHeader({ data }: { data: OnboardingData }) {
   );
 }
 
+type BrowserSupabase = ReturnType<typeof createSupabaseBrowserClient>;
+
+async function storeKrsDocument(
+  supabase: BrowserSupabase,
+  file: File,
+  extraction: Awaited<ReturnType<typeof extractKrsFile>>,
+) {
+  if (!supabase) return { warning: "" };
+  const { data: authData } = await supabase.auth.getUser();
+  if (!authData.user) return { warning: "" };
+  const { data: semester } = await supabase
+    .from("semesters")
+    .select("id")
+    .eq("user_id", authData.user.id)
+    .eq("is_active", true)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!semester?.id)
+    return { warning: "Berkas belum disimpan karena semester aktif belum tersedia. Hasil baca tetap aman." };
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, "-");
+  const path = `${authData.user.id}/${crypto.randomUUID()}-${safeName}`;
+  const upload = await supabase.storage.from("krs").upload(path, file, {
+    contentType: file.type,
+    upsert: false,
+  });
+  if (upload.error)
+    return { warning: "Hasil sudah terbaca, tetapi berkas asli belum berhasil disimpan. Kamu bisa mencobanya lagi nanti." };
+  const inserted = await supabase
+    .from("krs_documents")
+    .insert({
+      semester_id: semester.id,
+      user_id: authData.user.id,
+      storage_path: path,
+      file_name: file.name,
+      mime_type: file.type,
+      file_size: file.size,
+      extraction_status: "completed",
+      extraction_source: extraction.source,
+      extraction_confidence: extraction.confidence,
+      ocr_confidence: extraction.ocrConfidence ?? null,
+      needs_verification: extraction.needsVerification,
+      academic_period: extraction.academicPeriod ?? null,
+      total_courses: extraction.totalCourses ?? null,
+      total_credits: extraction.totalCredits ?? null,
+      page_count: extraction.pageCount,
+      extracted_at: new Date().toISOString(),
+    })
+    .select("id")
+    .single();
+  if (inserted.error) {
+    try {
+      const removed = await supabase.storage.from("krs").remove([path]);
+      if (removed.error)
+        return { warning: "Metadata KRS belum tercatat. Berkas asli belum berhasil dibersihkan; coba simpan lagi nanti." };
+    } catch {
+      return { warning: "Metadata KRS belum tercatat. Berkas asli belum berhasil dibersihkan; coba simpan lagi nanti." };
+    }
+    return { warning: "Berkas asli tidak sepenuhnya tersimpan dan sudah dihapus. Hasil baca tetap aman." };
+  }
+  return { path, documentId: inserted.data?.id };
+}
+
+async function storePlanningSnapshot(
+  supabase: BrowserSupabase,
+  snapshot: NonNullable<OnboardingData["planningSnapshot"]>,
+) {
+  if (!supabase) return "";
+  const { data: authData } = await supabase.auth.getUser();
+  if (!authData.user) return "";
+  const { data: semester } = await supabase
+    .from("semesters")
+    .select("id")
+    .eq("user_id", authData.user.id)
+    .eq("is_active", true)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!semester?.id) return "Snapshot belum tersimpan karena semester aktif belum tersedia.";
+  const result = await supabase.from("planning_snapshots").insert({
+    user_id: authData.user.id,
+    semester_id: semester.id,
+    reason: snapshot.reason,
+    priority_weights: snapshot.weights,
+    course_factors: snapshot.courseFactors,
+    availability_snapshot: snapshot.availability,
+    planning_period_start: snapshot.planningPeriod.start,
+    planning_period_end: snapshot.planningPeriod.end,
+    generated_at: snapshot.generatedAt,
+  });
+  return result.error ? "Snapshot prioritas belum tersimpan. Data onboarding tetap aman dan kamu bisa mencoba lagi." : "";
+}
+
 function KrsStep({
   data,
   update,
+  supabase,
+  authenticated,
 }: {
   data: OnboardingData;
   update: (patch: Partial<OnboardingData>) => void;
+  supabase: BrowserSupabase;
+  authenticated: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState("");
+  const [warning, setWarning] = useState("");
   const [processing, setProcessing] = useState(false);
-  const [stage, setStage] = useState(0);
+  const [stage, setStage] = useState(
+    data.krsExtraction?.status === "completed" || data.krsExtraction?.status === "manual" ? 3 : 0,
+  );
+  const extractionService = useMemo(() => new KrsExtractionService(), []);
 
-  function selectFile(event: ChangeEvent<HTMLInputElement>) {
+  async function selectFile(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
+    event.target.value = "";
     if (!ALLOWED_FILE_TYPES.includes(file.type))
       return setError("Gunakan PDF, JPG, JPEG, atau PNG.");
     if (file.size > MAX_FILE_SIZE)
       return setError("Ukuran berkas maksimal 10 MB.");
     setError("");
+    setWarning("");
     setProcessing(true);
     setStage(1);
     update({
@@ -490,17 +603,77 @@ function KrsStep({
       krsFileType: file.type,
       krsFileSize: file.size,
       krsUploadedAt: new Date().toISOString(),
+      krsExtraction: {
+        source: file.type === "application/pdf" ? "pdf-text" : "ocr",
+        status: "processing",
+        confidence: 0,
+        needsVerification: true,
+        conflicts: [],
+      },
     });
-    window.setTimeout(() => {
-      setStage(2);
-    }, 220);
-    window.setTimeout(() => {
+    try {
+      const extraction = await extractionService.extract(file, {
+        onProgress: (progress: ExtractionProgress) => {
+          setStage(progress.progress >= 0.9 ? 3 : progress.progress >= 0.45 ? 2 : 1);
+        },
+      });
+      const courses = extraction.candidates.map((candidate, index) => ({
+        id: `course-${candidate.code.toLowerCase()}-${index}`,
+        code: candidate.code,
+        name: candidate.name,
+        credits: candidate.credits,
+        semester: candidate.semester,
+        status: candidate.status,
+        confidence: candidate.confidence,
+        needsVerification: candidate.needsVerification,
+      }));
+      let storage: Awaited<ReturnType<typeof storeKrsDocument>> = { warning: "" };
+      if (authenticated && supabase) {
+        try {
+          storage = await storeKrsDocument(supabase, file, extraction);
+        } catch {
+          storage = {
+            warning: "Hasil sudah terbaca, tetapi berkas asli belum berhasil disimpan. Kamu bisa mencobanya lagi nanti.",
+          };
+        }
+      }
       setStage(3);
       setProcessing(false);
+      setWarning(storage.warning ?? "");
       update({
-        courses: data.courses.length ? data.courses : withMockCourses(),
+        courses,
+        semester: extraction.academicPeriod ?? data.semester,
+        krsExtraction: {
+          source: extraction.source,
+          status: "completed",
+          confidence: extraction.confidence,
+          ocrConfidence: extraction.ocrConfidence,
+          needsVerification: extraction.needsVerification,
+          academicPeriod: extraction.academicPeriod,
+          totalCourses: extraction.totalCourses,
+          totalCredits: extraction.totalCredits,
+          pageCount: extraction.pageCount,
+          rawTextLength: extraction.rawTextLength,
+          conflicts: extraction.conflicts,
+        },
+        krsStoragePath: storage.path,
+        krsDocumentId: storage.documentId,
       });
-    }, 520);
+    } catch {
+      setProcessing(false);
+      setStage(0);
+      update({
+        krsExtraction: {
+          source: file.type === "application/pdf" ? "pdf-text" : "ocr",
+          status: "failed",
+          confidence: 0,
+          needsVerification: true,
+          conflicts: [],
+          error: "Dokumen belum berhasil dibaca.",
+        },
+      });
+      setError("KRS belum berhasil dibaca. Coba unggah berkas yang lebih jelas atau isi mata kuliah secara manual.");
+    }
   }
 
   function useManual() {
@@ -510,21 +683,16 @@ function KrsStep({
       krsFileType: "manual",
       krsFileSize: 0,
       krsUploadedAt: new Date().toISOString(),
+      krsExtraction: {
+        source: "manual",
+        status: "manual",
+        confidence: 1,
+        needsVerification: true,
+        conflicts: [],
+      },
       courses: data.courses.length
         ? data.courses
         : [{ id: uid("course"), code: "", name: "", credits: 3, semester: 3 }],
-    });
-    setStage(3);
-  }
-
-  function useExample() {
-    setError("");
-    update({
-      krsFileName: "KRS-contoh-planify.pdf",
-      krsFileType: "application/pdf",
-      krsFileSize: 284000,
-      krsUploadedAt: new Date().toISOString(),
-      courses: withMockCourses(),
     });
     setStage(3);
   }
@@ -562,7 +730,7 @@ function KrsStep({
             className="sr-only"
             id="krs-file"
           />
-          <div className="mt-6 grid gap-3 sm:grid-cols-2">
+          <div className="mt-6">
             <button
               type="button"
               onClick={() => inputRef.current?.click()}
@@ -570,14 +738,6 @@ function KrsStep({
             >
               <Upload size={18} />
               Unggah KRS
-            </button>
-            <button
-              type="button"
-              onClick={useExample}
-              className="flex min-h-14 items-center justify-center gap-2 rounded-xl border border-ink/20 px-5 font-semibold transition hover:border-moss hover:bg-sage/40"
-            >
-              <Sparkles size={17} />
-              Gunakan KRS contoh
             </button>
           </div>
           <button
@@ -607,6 +767,11 @@ function KrsStep({
               {error}
             </p>
           )}
+          {warning && (
+            <p role="status" className="mt-4 rounded-xl bg-sand p-3 text-sm text-ink">
+              {warning}
+            </p>
+          )}
           {data.krsFileName && (
             <div className="mt-6 border-t border-ink/10 pt-5">
               <div className="flex items-center gap-3">
@@ -621,41 +786,58 @@ function KrsStep({
                     {data.krsFileSize
                       ? `${(data.krsFileSize / 1024).toFixed(0)} KB`
                       : "Isi manual"}{" "}
-                    · contoh ekstraksi
+                    · hasil baca siap diperiksa
                   </p>
                 </div>
                 {!processing && (
                   <Check className="ml-auto text-moss" size={18} />
                 )}
               </div>
-              <div className="mt-5 space-y-2 text-sm">
+              <div
+                className="mt-5 flex flex-col gap-2 text-sm sm:flex-row"
+                role="list"
+                aria-label="Tahapan pembacaan KRS"
+                aria-live="polite"
+              >
                 {[
-                  "Dokumen siap diperiksa",
-                  "Mencari mata kuliah yang kamu ambil",
-                  "Menyiapkan hasil contoh",
-                ].map((label, index) => (
-                  <div
-                    key={label}
-                    className={`flex items-center gap-3 ${stage > index ? "text-moss" : "text-ink/40"}`}
-                  >
-                    {stage > index ? (
-                      <Check size={16} />
-                    ) : processing && stage === index + 1 ? (
-                      <span className="h-4 w-4 rounded-full border-2 border-coral border-t-transparent soft-pulse" />
-                    ) : (
-                      <span className="h-4 w-4 rounded-full border border-ink/20" />
-                    )}
-                    <span>{label}</span>
-                  </div>
-                ))}
+                  ["Dokumen siap diperiksa", "Berkas dibuka"],
+                  ["Mencari mata kuliah yang kamu ambil", "Isi dokumen dikenali"],
+                  ["Menyiapkan hasil", "Data siap kamu periksa"],
+                ].map(([label, detail], index) => {
+                  const completed = stage > index;
+                  const current = processing && stage === index + 1;
+                  return (
+                    <div
+                      key={label}
+                      role="listitem"
+                      aria-current={current ? "step" : undefined}
+                      className={`accordion-panel min-w-0 flex-1 rounded-xl border p-3 ${completed ? "border-moss/30 bg-sage/40 text-moss" : current ? "border-coral/40 bg-coral/5 text-ink" : "border-ink/10 bg-cream/60 text-ink/40"}`}
+                    >
+                      <div className="flex items-center gap-3">
+                        {completed ? (
+                          <Check size={16} />
+                        ) : current ? (
+                          <span className="h-4 w-4 rounded-full border-2 border-coral border-t-transparent soft-pulse" />
+                        ) : (
+                          <span className="h-4 w-4 rounded-full border border-ink/20" />
+                        )}
+                        <span className="font-semibold">{label}</span>
+                      </div>
+                      <p className="mt-2 pl-7 text-xs opacity-75">
+                        {completed ? "Selesai" : current ? "Sedang berlangsung" : detail}
+                      </p>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
         </div>
         <div className="mt-4 flex items-start gap-2 text-xs leading-5 text-ink/55">
           <LockKeyhole size={15} className="mt-0.5 shrink-0 text-moss" />
-          Berkas KRS tersimpan privat saat Supabase terhubung. Mode demo hanya
-          menyimpan ringkasan di perangkat ini.
+          {authenticated
+            ? "Berkas asli disimpan privat di Supabase saat berhasil diunggah."
+            : "Mode lokal memproses berkas di perangkat ini dan tidak mengunggahnya."}
         </div>
       </div>
       <div className="relative overflow-hidden rounded-[2rem] bg-moss p-7 text-cream shadow-soft sm:p-9">
@@ -669,8 +851,8 @@ function KrsStep({
             Mulai dari data yang sudah kamu punya.
           </h2>
           <p className="mt-6 max-w-sm text-sm leading-6 text-cream/70">
-            KRS contoh berisi tujuh mata kuliah dan 21 SKS agar alurnya bisa
-            langsung dicoba.
+            Kamu bisa memeriksa hasil baca, mengubahnya, atau beralih ke isian
+            manual kapan saja.
           </p>
           <div className="mt-10 flex items-center gap-3 text-sm text-cream/70">
             <div className="grid h-10 w-10 place-items-center rounded-full bg-cream/10">
@@ -813,9 +995,20 @@ function CoursesStep({
         Pastikan data berikut sudah benar sebelum kita melihat bentuk minggu
         kamu.
       </p>
+      {data.krsExtraction?.needsVerification && (
+        <p role="status" className="mt-5 rounded-xl border border-coral/30 bg-coral/5 p-3 text-sm leading-6 text-ink">
+          Beberapa hasil baca perlu kamu periksa lebih teliti sebelum
+          melanjutkan.
+          {data.krsExtraction.conflicts.length > 0 &&
+            ` Ada ${data.krsExtraction.conflicts.length} perbedaan data yang ditandai.`}
+        </p>
+      )}
       <div className="mt-8 divide-y divide-ink/10 rounded-[1.75rem] border border-ink/15 bg-white/70">
         {data.courses.map((course) => (
-          <div key={course.id} className="p-5 sm:p-6">
+          <div
+            key={course.id}
+            className={`p-5 sm:p-6 ${course.needsVerification ? "bg-coral/5" : ""}`}
+          >
             {editing === course.id ? (
               <CourseForm
                 course={course}
@@ -834,7 +1027,13 @@ function CoursesStep({
                   </p>
                   <p className="mt-1 text-xs text-ink/50">
                     {course.credits} SKS · Semester {course.semester}
+                    {course.status ? ` · ${course.status}` : ""}
                   </p>
+                  {course.needsVerification && (
+                    <p className="mt-1 text-xs font-semibold text-coral">
+                      Perlu diperiksa
+                    </p>
+                  )}
                 </div>
                 <button
                   type="button"
@@ -1550,13 +1749,24 @@ function SummaryStep({
     (sum, range) => sum + minutesBetween(range.start, range.end),
     0,
   );
-  const attention = [...data.courses]
-    .sort(
-      (a, b) =>
-        (data.evaluations[a.id]?.understanding ?? 5) -
-        (data.evaluations[b.id]?.understanding ?? 5),
-    )
-    .slice(0, 3);
+  const attention = rankPriorities(
+    data.courses.map((course) =>
+      calculatePriority(
+        {
+          courseId: course.id,
+          code: course.code,
+          name: course.name,
+          credits: course.credits,
+          understanding: data.evaluations[course.id]?.understanding,
+          difficulty: data.evaluations[course.id]?.difficulty,
+          events: data.academicEvents
+            .filter((event) => event.courseId === course.id)
+            .map((event) => ({ date: event.date, importance: event.importance })),
+        },
+        { today: dateInTimeZone(new Date(), data.timezone) },
+      ),
+    ),
+  ).slice(0, 3);
   const nearestEvent = [...data.academicEvents].sort((a, b) =>
     a.date.localeCompare(b.date),
   )[0];
@@ -1567,8 +1777,8 @@ function SummaryStep({
         <span className="text-coral">Lihat sekali lagi sebelum mulai.</span>
       </p>
       <p className="mt-4 max-w-xl text-base leading-7 text-ink/65">
-        Kamu bisa kembali mengubah bagian mana pun. Rencana baru dibuat setelah
-        kamu menekan tombol di bawah.
+        Kamu bisa kembali mengubah bagian mana pun. Prioritas baru dihitung
+        setelah kamu menekan tombol di bawah.
       </p>
       <div className="mt-8 grid grid-flow-dense grid-cols-1 gap-4 sm:grid-cols-6">
         <SummaryCard
@@ -1609,7 +1819,7 @@ function SummaryStep({
               </p>
               <ol className="mt-4 space-y-2 text-lg font-semibold">
                 {attention.map((course, index) => (
-                  <li key={course.id}>
+                  <li key={course.courseId}>
                     <span className="mr-2 text-coral">0{index + 1}</span>
                     {course.name}
                   </li>
@@ -1659,10 +1869,10 @@ function SummaryStep({
       <div className="mt-6 flex flex-col items-stretch justify-between gap-4 rounded-[1.5rem] bg-coral p-5 text-white sm:flex-row sm:items-center sm:p-6">
         <div>
           <p className="text-xl font-bold tracking-[-0.03em]">
-            Siap membuat ruang untuk belajar?
+            Siap menyiapkan prioritas belajar?
           </p>
           <p className="mt-1 text-sm text-white/75">
-            Rencana dibuat dari informasi yang baru saja kamu periksa.
+            Snapshot prioritas dihitung dari informasi yang baru saja kamu periksa.
           </p>
         </div>
         <button
@@ -1671,7 +1881,7 @@ function SummaryStep({
           className="flex min-h-12 shrink-0 items-center justify-center gap-2 rounded-xl bg-white px-5 font-bold text-ink transition hover:bg-cream"
         >
           <Sparkles size={17} />
-          Buat Rencana Belajar
+          Siapkan Prioritas
         </button>
       </div>
     </div>
@@ -1712,9 +1922,11 @@ function SummaryCard({
 function PlanReady({
   data,
   onReview,
+  warning,
 }: {
   data: OnboardingData;
   onReview: () => void;
+  warning?: string;
 }) {
   const totalCredits = data.courses.reduce(
     (sum, course) => sum + course.credits,
@@ -1726,28 +1938,33 @@ function PlanReady({
         <Sparkles size={30} />
       </div>
       <p className="mt-8 text-sm font-semibold text-moss">
-        Rencana Belajar Siap
+        Prioritas Belajar Siap
       </p>
       <h1 className="mt-3 max-w-2xl text-4xl font-bold leading-[0.98] tracking-[-0.06em] sm:text-6xl">
-        Rencana belajar yang punya ruang untuk hidupmu.
+        Prioritas belajar yang punya ruang untuk hidupmu.
       </h1>
       <p className="mt-6 max-w-xl text-base leading-7 text-ink/65">
         Informasi {data.courses.length} mata kuliah dan {totalCredits} SKS sudah
-        dirangkum. Konteks belajarmu siap diteruskan ke fase perencanaan
+        dirangkum menjadi prioritas. Jadwal sesi akan dibuat pada fase
         berikutnya.
       </p>
+      {warning && (
+        <p role="status" className="mt-5 rounded-xl bg-sand p-3 text-sm leading-6 text-ink">
+          {warning}
+        </p>
+      )}
       <div className="mt-8 space-y-3 rounded-2xl bg-cream p-5">
         <p className="flex items-center gap-3 text-sm font-semibold">
           <Check size={17} className="text-moss" />
-          Beban studi dirangkum
+          Prioritas mata kuliah dihitung
         </p>
         <p className="flex items-center gap-3 text-sm font-semibold">
-          <Check size={17} className="text-moss" />
-          Konteks belajar disimpan
+          {warning ? <CircleHelp size={17} className="text-coral" /> : <Check size={17} className="text-moss" />}
+          {warning ? "Snapshot perlu dicoba lagi" : "Snapshot perencanaan disimpan"}
         </p>
         <p className="flex items-center gap-3 text-sm font-semibold">
-          <Check size={17} className="text-moss" />
-          Ringkasan siap diteruskan ke fase perencanaan
+          <CircleHelp size={17} className="text-coral" />
+          Jadwal sesi belum dibuat pada fase ini
         </p>
       </div>
       <div className="mt-8 flex flex-col gap-3 sm:flex-row">
@@ -1755,7 +1972,7 @@ function PlanReady({
           href="/hari-ini"
           className="flex min-h-13 flex-1 items-center justify-center gap-2 rounded-xl bg-moss px-5 py-3 font-semibold text-cream transition hover:bg-ink"
         >
-          Mulai Gunakan Rencana
+          Lihat Status Persiapan
           <ArrowRight size={17} />
         </a>
         <button
@@ -1778,10 +1995,10 @@ function PlanGenerating() {
         <Sparkles size={28} />
       </div>
       <p className="mt-8 text-sm font-semibold text-coral">
-        Sedang menyusun rencana belajarmu...
+        Sedang menghitung prioritas belajarmu...
       </p>
       <h1 className="mt-3 text-4xl font-bold leading-[0.98] tracking-[-0.06em] sm:text-5xl">
-        Menyiapkan langkah pertama yang terasa mungkin.
+        Menyiapkan ringkasan prioritas yang terasa mungkin.
       </h1>
       <div className="mt-8 space-y-3 rounded-2xl bg-cream p-5">
         <p className="flex items-center gap-3 text-sm font-semibold">
@@ -1790,11 +2007,11 @@ function PlanGenerating() {
         </p>
         <p className="flex items-center gap-3 text-sm font-semibold">
           <Check size={17} className="text-moss" />
-          Menyiapkan layar rencana belajar
+          Menghitung prioritas mata kuliah
         </p>
         <p className="flex items-center gap-3 text-sm text-ink/50">
           <span className="h-4 w-4 rounded-full border-2 border-coral border-t-transparent soft-pulse" />
-          Membuka rencana yang sudah siap
+          Menyimpan snapshot perencanaan
         </p>
       </div>
     </div>
@@ -1809,6 +2026,7 @@ export default function OnboardingApp() {
   const [generationStatus, setGenerationStatus] = useState<
     "idle" | "processing" | "ready"
   >("idle");
+  const [generationWarning, setGenerationWarning] = useState("");
   const [savedNotice, setSavedNotice] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
   const [remoteReady, setRemoteReady] = useState(false);
@@ -1979,7 +2197,32 @@ export default function OnboardingApp() {
   const reviewSummary = () => {
     setGenerationReady(false);
     setGenerationStatus("idle");
+    setGenerationWarning("");
     setData((current) => ({ ...current, step: 5, planActive: false }));
+  };
+  const generatePlan = async () => {
+    setGenerationWarning("");
+    setGenerationStatus("processing");
+    const snapshot = buildPlanningSnapshot(data, {
+      today: dateInTimeZone(new Date(), data.timezone),
+    });
+    setData((current) => ({ ...current, planActive: true, planningSnapshot: snapshot }));
+    let warning = "";
+    if (authenticated && supabase) {
+      try {
+        warning = await storePlanningSnapshot(supabase, snapshot);
+      } catch {
+        warning = "Snapshot prioritas belum tersimpan. Data onboarding tetap aman dan kamu bisa mencoba lagi.";
+      }
+    }
+    setGenerationWarning(
+      warning ||
+        (!authenticated
+          ? "Mode lokal: prioritas tersimpan di perangkat ini. Belum ada jadwal sesi yang dibuat."
+          : ""),
+    );
+    setGenerationStatus("ready");
+    setGenerationReady(true);
   };
 
   if (!hydrated)
@@ -2041,7 +2284,7 @@ export default function OnboardingApp() {
             </div>
           </header>
           <div className="mt-16">
-            <PlanReady data={data} onReview={reviewSummary} />
+            <PlanReady data={data} onReview={reviewSummary} warning={generationWarning} />
           </div>
         </div>
       </main>
@@ -2148,7 +2391,14 @@ export default function OnboardingApp() {
         </div>
         <section className="mt-10 rounded-[2rem] border border-ink/10 bg-cream/75 p-5 shadow-[0_20px_70px_rgba(23,37,31,.06)] sm:p-8 md:p-10">
           <StepHeader data={data} />
-          {activeStep === 0 && <KrsStep data={data} update={update} />}
+          {activeStep === 0 && (
+            <KrsStep
+              data={data}
+              update={update}
+              supabase={supabase}
+              authenticated={authenticated}
+            />
+          )}
           {activeStep === 1 && <CoursesStep data={data} update={update} />}
           {activeStep === 2 && <ScheduleStep data={data} update={update} />}
           {activeStep === 3 && <HabitsStep data={data} update={update} />}
@@ -2157,14 +2407,7 @@ export default function OnboardingApp() {
             <SummaryStep
               data={data}
               onEdit={editStep}
-              onGenerate={() => {
-                update({ planActive: true });
-                setGenerationStatus("processing");
-                window.setTimeout(() => {
-                  setGenerationStatus("ready");
-                  setGenerationReady(true);
-                }, 0);
-              }}
+              onGenerate={() => void generatePlan()}
             />
           )}
           {activeStep !== 5 && (
@@ -2200,8 +2443,8 @@ export default function OnboardingApp() {
         <div className="mt-8 flex items-start gap-3 text-xs leading-5 text-ink/50">
           <CircleHelp size={16} className="mt-0.5 shrink-0 text-coral" />
           <p>
-            Ini adalah mode demo dengan ekstraksi KRS contoh. Belum ada
-            pembacaan PDF atau OCR sungguhan.
+            Hasil KRS dapat diperiksa dan diubah sebelum disimpan sebagai data
+            mata kuliah.
           </p>
         </div>
       </div>

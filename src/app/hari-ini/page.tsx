@@ -131,7 +131,7 @@ export default function HariIniPage() {
           </h1>
           <p className="mt-6 max-w-2xl text-base leading-7 text-ink/65">
             Onboarding untuk {setup.courses.length} mata kuliah sudah tersimpan.
-            Layar ini adalah handoff minimal setelah persiapan.
+            Prioritas belajarmu sudah siap ditinjau sebelum jadwal sesi dibuat.
           </p>
           <div className="mt-8 grid gap-3 sm:grid-cols-3">
             <div className="rounded-2xl bg-cream p-4">
@@ -158,11 +158,11 @@ export default function HariIniPage() {
               <Sparkles className="mt-1 shrink-0 text-coral" size={20} />
               <div>
                 <p className="font-semibold">
-                  Rencana harian akan hadir di fase berikutnya.
+                  Jadwal sesi belajar akan hadir di fase berikutnya.
                 </p>
                 <p className="mt-2 text-sm leading-6 text-ink/65">
-                  Mesin prioritas, jadwal sesi, dan navigasi utama sengaja belum
-                  tersedia di Fase 2.
+                  Mesin prioritas sudah menyiapkan snapshot. Jadwal sesi dan
+                  navigasi utama akan hadir pada fase berikutnya.
                 </p>
               </div>
             </div>

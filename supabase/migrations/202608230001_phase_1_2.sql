@@ -118,7 +118,7 @@ do $$
 declare
   table_name text;
 begin
-  foreach table_name in array['semesters','krs_documents','courses','learning_profiles','availability_slots','course_learning_profiles','academic_events'] loop
+  foreach table_name in array ARRAY['semesters','krs_documents','courses','learning_profiles','availability_slots','course_learning_profiles','academic_events'] loop
     execute format('drop policy if exists "pengguna dapat mengelola data sendiri" on public.%I', table_name);
     execute format('create policy "pengguna dapat mengelola data sendiri" on public.%I for all using (user_id = auth.uid()) with check (user_id = auth.uid())', table_name);
   end loop;

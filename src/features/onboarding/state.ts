@@ -16,6 +16,9 @@ export const onboardingDataSchema = z.object({
       name: z.string(),
       credits: z.number().int().min(1).max(12),
       semester: z.number().int().min(1).max(20),
+      status: z.string().optional(),
+      confidence: z.number().min(0).max(1).optional(),
+      needsVerification: z.boolean().optional(),
     }),
   ),
   classSchedules: z.record(
@@ -77,11 +80,88 @@ export const onboardingDataSchema = z.object({
     }),
   ),
   planActive: z.boolean(),
+  krsExtraction: z
+    .object({
+      source: z.enum(["pdf-text", "ocr", "manual", "demo"]),
+      status: z.enum([
+        "pending",
+        "processing",
+        "completed",
+        "failed",
+        "manual",
+      ]),
+      confidence: z.number().min(0).max(1),
+      ocrConfidence: z.number().min(0).max(1).optional(),
+      needsVerification: z.boolean(),
+      academicPeriod: z.string().optional(),
+      totalCourses: z.number().int().nonnegative().optional(),
+      totalCredits: z.number().nonnegative().optional(),
+      pageCount: z.number().int().positive().optional(),
+      rawTextLength: z.number().int().nonnegative().optional(),
+      conflicts: z.array(
+        z.object({
+          identity: z.string(),
+          field: z.string(),
+          values: z.array(z.string()),
+        }),
+      ),
+      error: z.string().optional(),
+    })
+    .optional()
+    .default({
+      source: "manual",
+      status: "manual",
+      confidence: 0,
+      needsVerification: false,
+      conflicts: [],
+    }),
+  krsStoragePath: z.string().optional(),
+  krsDocumentId: z.string().optional(),
+  planningSnapshot: z
+    .object({
+      reason: z.enum(["initial", "adaptation"]),
+      generatedAt: z.string(),
+      planningPeriod: z.object({ start: z.string(), end: z.string() }),
+      weights: z.object({
+        academicLoad: z.number(),
+        knowledgeGap: z.number(),
+        difficulty: z.number(),
+        urgency: z.number(),
+        adaptation: z.number(),
+      }),
+      courseFactors: z.array(
+        z.object({
+          courseId: z.string(),
+          code: z.string(),
+          name: z.string(),
+          factors: z.object({
+            academicLoad: z.number(),
+            knowledgeGap: z.number(),
+            difficulty: z.number(),
+            urgency: z.number(),
+            adaptation: z.number(),
+          }),
+          score: z.number(),
+        }),
+      ),
+      availability: z.array(
+        z.object({
+          id: z.string(),
+          day: z.string(),
+          start: z.string(),
+          end: z.string(),
+        }),
+      ),
+    })
+    .optional(),
 });
 
 export function canAdvance(data: OnboardingData) {
-  if (data.step === 0)
+  if (data.step === 0) {
+    if (data.krsExtraction?.status === "processing" || data.krsExtraction?.status === "failed")
+      return false;
     return data.courses.length > 0 && Boolean(data.krsFileName);
+  }
   if (data.step === 1)
     return (
       data.courses.length > 0 &&

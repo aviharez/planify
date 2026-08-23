@@ -35,6 +35,30 @@ export type Course = {
   name: string;
   credits: number;
   semester: number;
+  status?: string;
+  confidence?: number;
+  needsVerification?: boolean;
+};
+
+export type KrsConflict = {
+  identity: string;
+  field: string;
+  values: string[];
+};
+
+export type KrsExtractionMetadata = {
+  source: "pdf-text" | "ocr" | "manual" | "demo";
+  status: "pending" | "processing" | "completed" | "failed" | "manual";
+  confidence: number;
+  ocrConfidence?: number;
+  needsVerification: boolean;
+  academicPeriod?: string;
+  totalCourses?: number;
+  totalCredits?: number;
+  pageCount?: number;
+  rawTextLength?: number;
+  conflicts: KrsConflict[];
+  error?: string;
 };
 
 export type TimeRange = {
@@ -77,6 +101,41 @@ export type OnboardingData = {
   evaluations: Record<string, CourseEvaluation>;
   academicEvents: AcademicEvent[];
   planActive: boolean;
+  krsExtraction?: KrsExtractionMetadata;
+  krsStoragePath?: string;
+  krsDocumentId?: string;
+  planningSnapshot?: PlanningSnapshot;
+};
+
+export type PriorityWeights = {
+  academicLoad: number;
+  knowledgeGap: number;
+  difficulty: number;
+  urgency: number;
+  adaptation: number;
+};
+
+export type PriorityFactors = {
+  academicLoad: number;
+  knowledgeGap: number;
+  difficulty: number;
+  urgency: number;
+  adaptation: number;
+};
+
+export type PlanningSnapshot = {
+  reason: "initial" | "adaptation";
+  generatedAt: string;
+  planningPeriod: { start: string; end: string };
+  weights: PriorityWeights;
+  courseFactors: Array<{
+    courseId: string;
+    code: string;
+    name: string;
+    factors: PriorityFactors;
+    score: number;
+  }>;
+  availability: TimeRange[];
 };
 
 export const DAYS = [
@@ -107,4 +166,11 @@ export const initialOnboardingData: OnboardingData = {
   evaluations: {},
   academicEvents: [],
   planActive: false,
+  krsExtraction: {
+    source: "manual",
+    status: "manual",
+    confidence: 0,
+    needsVerification: false,
+    conflicts: [],
+  },
 };
