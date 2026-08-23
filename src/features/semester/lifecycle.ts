@@ -28,7 +28,7 @@ export function createNewSemesterSetup(previous: OnboardingData, reusePreference
     ...initialOnboardingData,
     timezone: previous.timezone,
     semester: name,
-    availability: reusePreferences ? previous.availability.map((range) => ({ ...range, id: `${range.id}-baru` })) : [],
+    availability: [],
     focusPeriods: reusePreferences ? [...previous.focusPeriods] : [...initialOnboardingData.focusPeriods],
     focusDuration: reusePreferences ? previous.focusDuration : initialOnboardingData.focusDuration,
     activityDensity: reusePreferences ? previous.activityDensity : initialOnboardingData.activityDensity,

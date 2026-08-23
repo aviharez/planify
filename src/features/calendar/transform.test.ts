@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { combineCalendarEvents, mapGoogleEventToCalendarEvent } from "./transform";
+import { calendarRangeToUtc, combineCalendarEvents, groupMonthEvents, mapGoogleEventToCalendarEvent } from "./transform";
 
 const source = {
   courses: [{ id: "c", code: "IF", name: "Basis Data", credits: 3, semester: 3 }],
@@ -24,8 +24,38 @@ test("recurrence dan batas tanggal tidak bergantung pada zona waktu mesin", () =
 });
 
 test("overlay Google eksternal read-only dan acara Planify dikecualikan", () => {
-  const external = mapGoogleEventToCalendarEvent({ id: "external", summary: "Rapat organisasi", start: { dateTime: "2026-08-26T15:00:00+07:00" }, end: { dateTime: "2026-08-26T16:00:00+07:00" } });
+  const external = mapGoogleEventToCalendarEvent({ id: "external", summary: "Rapat organisasi", start: { dateTime: "2026-08-26T15:00:00+07:00" }, end: { dateTime: "2026-08-26T16:00:00+07:00" } }, "Asia/Jakarta");
   assert.equal(external?.source, "google");
   assert.equal(external?.editable, false);
   assert.equal(mapGoogleEventToCalendarEvent({ id: "managed", extendedProperties: { private: { planifyManaged: "true" } } }), null);
+});
+
+test("month view mengelompokkan kuliah, belajar, agenda, dan ujian", () => {
+  const events = [
+    { id: "class", source: "planify" as const, category: "class" as const, title: "Kuliah", date: "2026-08-24", editable: true },
+    { id: "class-2", source: "planify" as const, category: "class" as const, title: "Kuliah lain", date: "2026-08-24", editable: true },
+    { id: "study", source: "planify" as const, category: "study" as const, title: "Belajar", date: "2026-08-24", editable: true },
+    { id: "exam", source: "planify" as const, category: "exam" as const, title: "Ujian", date: "2026-08-24", editable: true },
+  ];
+  const indicators = groupMonthEvents(events)["2026-08-24"];
+  assert.deepEqual(indicators?.map((group) => group.category), ["class", "study", "exam"]);
+  assert.equal(indicators?.[0]?.count, 2);
+});
+
+test("Google Calendar ditampilkan di Asia/Jakarta tanpa memotong offset", () => {
+  const plusSeven = mapGoogleEventToCalendarEvent({ id: "plus-seven", start: { dateTime: "2026-08-26T15:00:00+07:00" }, end: { dateTime: "2026-08-26T16:00:00+07:00" } }, "Asia/Jakarta");
+  const plusNine = mapGoogleEventToCalendarEvent({ id: "plus-nine", start: { dateTime: "2026-08-26T09:00:00+09:00" } }, "Asia/Jakarta");
+  const utc = mapGoogleEventToCalendarEvent({ id: "utc", start: { dateTime: "2026-08-26T01:00:00Z" } }, "Asia/Jakarta");
+  const midnight = mapGoogleEventToCalendarEvent({ id: "midnight", start: { dateTime: "2026-08-23T17:30:00Z" } }, "Asia/Jakarta");
+  const allDay = mapGoogleEventToCalendarEvent({ id: "all-day", start: { date: "2026-08-26" }, end: { date: "2026-08-27" } }, "Asia/Jakarta");
+  assert.deepEqual({ date: plusSeven?.date, startTime: plusSeven?.startTime }, { date: "2026-08-26", startTime: "15:00" });
+  assert.equal(plusNine?.startTime, "07:00");
+  assert.equal(utc?.startTime, "08:00");
+  assert.deepEqual({ date: midnight?.date, startTime: midnight?.startTime }, { date: "2026-08-24", startTime: "00:30" });
+  assert.equal(allDay?.startTime, undefined);
+});
+
+test("rentang Google Calendar mengikuti tengah malam lokal", () => {
+  assert.deepEqual(calendarRangeToUtc("2026-08-24", "2026-08-30", "Asia/Jakarta"), { start: "2026-08-23T17:00:00.000Z", end: "2026-08-30T16:59:59.999Z" });
+  assert.deepEqual(calendarRangeToUtc("2026-10-04", "2026-10-04", "Australia/Sydney"), { start: "2026-10-03T14:00:00.000Z", end: "2026-10-04T12:59:59.999Z" });
 });

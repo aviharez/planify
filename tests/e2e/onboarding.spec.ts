@@ -80,6 +80,11 @@ test.describe("setup lokal Planify", () => {
       timeout: 30_000,
     });
     await expect(page.getByText("Kalender Planify")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Bulan" })).toHaveAttribute("aria-pressed", "true");
+    await page.getByRole("button", { name: "Minggu" }).click();
+    await expect(page.getByRole("button", { name: "Minggu" })).toHaveAttribute("aria-pressed", "true");
+    await page.getByRole("button", { name: "Bulan" }).click();
+    await expect(page.getByRole("button", { name: "Bulan" })).toHaveAttribute("aria-pressed", "true");
     await page.getByRole("button", { name: "Mulai Gunakan Rencana" }).click();
 
     await expect(page).toHaveURL(/\/hari-ini$/);
@@ -91,6 +96,14 @@ test.describe("setup lokal Planify", () => {
 
     await page.reload();
     await expect(page.getByRole("heading", { name: "Hari Ini" })).toBeVisible();
+
+    await page.goto("/rencana");
+    await expect(page.getByText("Rencana belajar", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Minggu" })).toHaveAttribute("aria-pressed", "true");
+    await page.getByRole("button", { name: "Bulan" }).click();
+    await expect(page.getByRole("button", { name: "Bulan" })).toHaveAttribute("aria-pressed", "true");
+    await page.getByRole("button", { name: "Minggu" }).click();
+    await expect(page.getByRole("button", { name: "Minggu" })).toHaveAttribute("aria-pressed", "true");
 
     await page.goto("/");
     await expect(page).toHaveURL(/\/hari-ini$/);
@@ -118,6 +131,11 @@ test.describe("setup lokal Planify", () => {
     expect(semesterState.current.courses).toEqual([]);
     expect(semesterState.current.classSchedules).toEqual({});
     expect(semesterState.current.academicEvents).toEqual([]);
+    expect(semesterState.current.availability).toEqual([]);
+    expect(semesterState.current.focusPeriods).toEqual(previousSetup.focusPeriods);
+    expect(semesterState.current.focusDuration).toBe(previousSetup.focusDuration);
+    expect(semesterState.current.activityDensity).toBe(previousSetup.activityDensity);
+    expect(semesterState.current.procrastination).toBe(previousSetup.procrastination);
     expect(semesterState.current.studyPlan).toBeUndefined();
     expect(semesterState.current.planActive).toBe(false);
   });

@@ -8,7 +8,7 @@ import { refreshGoogleAccessToken } from "@/features/calendar/oauth";
 import { CalendarProviderError, GoogleCalendarProvider, removeManagedFutureEvent, syncManagedEvents, timeInTimeZone } from "@/features/calendar/provider";
 import { dateInTimeZone } from "@/features/planning/priority";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
-import { mapGoogleEventToCalendarEvent } from "@/features/calendar/transform";
+import { calendarRangeToUtc, mapGoogleEventToCalendarEvent } from "@/features/calendar/transform";
 import type { PlanifyCalendarEvent } from "@/features/calendar/types";
 import { z } from "zod";
 
@@ -180,6 +180,9 @@ export async function getCalendarOverlay(input: unknown): Promise<{ ok: boolean;
   if (!supabase || !user) return { ok: true, events: [] };
   const { data: connection } = await supabase.from("calendar_connections").select("calendar_id, access_token_ciphertext, refresh_token_ciphertext, access_token_expires_at").eq("user_id", user.id).eq("provider", "google").maybeSingle();
   if (!connection) return { ok: true, events: [] };
+  const { data: semester } = await supabase.from("semesters").select("setup_payload").eq("user_id", user.id).eq("is_active", true).order("updated_at", { ascending: false }).limit(1).maybeSingle();
+  const setup = onboardingDataSchema.safeParse(semester?.setup_payload);
+  if (!setup.success) return { ok: false, events: [], message: "Zona waktu Planify belum tersedia." };
   try {
     let accessToken = decryptCalendarToken(connection.access_token_ciphertext);
     let refreshedCiphertext: string | undefined;
@@ -192,8 +195,9 @@ export async function getCalendarOverlay(input: unknown): Promise<{ ok: boolean;
       expiresIn = refreshed.expires_in ?? 3600;
     }
     const provider = new GoogleCalendarProvider(accessToken);
-    const listing = await provider.list(connection.calendar_id, `${parsed.data.start}T00:00:00Z`, `${parsed.data.end}T23:59:59Z`);
-    const events = (listing.items ?? []).map(mapGoogleEventToCalendarEvent).filter((event): event is PlanifyCalendarEvent => Boolean(event));
+    const utcRange = calendarRangeToUtc(parsed.data.start, parsed.data.end, setup.data.timezone);
+    const listing = await provider.list(connection.calendar_id, utcRange.start, utcRange.end);
+    const events = (listing.items ?? []).map((event) => mapGoogleEventToCalendarEvent(event, setup.data.timezone)).filter((event): event is PlanifyCalendarEvent => Boolean(event));
     if (refreshedCiphertext) await supabase.from("calendar_connections").update({ access_token_ciphertext: refreshedCiphertext, access_token_expires_at: new Date(Date.now() + expiresIn * 1000).toISOString(), updated_at: new Date().toISOString() }).eq("user_id", user.id).eq("provider", "google");
     return { ok: true, events };
   } catch {

@@ -229,13 +229,14 @@ function PlanView({ data, onLogout, onAdapt }: { data: MainData; onLogout: () =>
   const rangeStart = range.start;
   const rangeEnd = range.end;
   const [overlay, setOverlay] = useState<import("@/features/calendar/types").PlanifyCalendarEvent[]>([]);
-  useEffect(() => { void getCalendarOverlay({ start: rangeStart, end: rangeEnd }).then((result) => { if (result.ok) setOverlay(result.events); }); }, [rangeStart, rangeEnd]);
+  const [overlayMessage, setOverlayMessage] = useState("");
+  useEffect(() => { void getCalendarOverlay({ start: rangeStart, end: rangeEnd }).then((result) => { setOverlay(result.events); setOverlayMessage(result.message ?? ""); }); }, [rangeStart, rangeEnd]);
   const events = combineCalendarEvents({ courses: setup.courses, classSchedules: setup.classSchedules, sessions: plan.sessions, academicEvents: setup.academicEvents }, range, overlay);
   return (
     <PageFrame data={data} view="rencana" onLogout={onLogout}>
       <MotionReveal>
         <header data-main-reveal><p className="text-sm font-semibold text-coral">Rencana belajar</p><h1 className="mt-3 max-w-6xl text-5xl font-bold leading-[0.95] tracking-[-0.07em]">Kalender yang menjaga langkahmu tetap terlihat.</h1><p className="mt-5 text-base text-ink/60">Kuliah, sesi belajar, dan agenda akademik dalam satu ruang.</p></header>
-        <div className="mt-10" data-main-reveal><CalendarView events={events} initialDate={today} range={range} /></div>
+        <div className="mt-10" data-main-reveal><CalendarView events={events} initialDate={today} range={range} initialMode="week" />{overlayMessage && <p className="mt-3 text-sm text-ink/55" role="status">{overlayMessage}</p>}</div>
         {plan.changeSummary && plan.changeSummary.length > 0 && <aside className="mt-10 rounded-[1.5rem] border border-coral/30 bg-coral/10 p-5" role="status" data-main-reveal><p className="text-sm font-semibold text-coral">Rencanamu Diperbarui</p><p className="mt-2 text-sm leading-6 text-ink/70">{plan.adaptationReason}</p><ul className="mt-4 space-y-2 text-sm leading-6 text-ink/75">{plan.changeSummary.map((change) => <li key={change.sessionKey} className="border-t border-coral/15 pt-2 first:border-0 first:pt-0"><span className="font-semibold">{change.courseName}</span> · {change.reason}</li>)}</ul></aside>}
         <WeeklyEvaluationForm data={data} onSubmit={onAdapt} />
         <p className="mt-6 text-sm leading-6 text-ink/55">Rencana ke depan tetap bisa berubah ketika kamu memberi kabar tentang ritmemu.</p>
