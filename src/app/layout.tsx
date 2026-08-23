@@ -5,6 +5,11 @@ export const metadata: Metadata = {
   title: "Planify — Teman belajar yang menyesuaikan",
   description:
     "Siapkan prioritas belajar yang terasa masuk akal untuk minggu kamu.",
+  manifest: "/manifest.webmanifest",
+  icons: {
+    icon: "/icon-192.svg",
+    apple: "/apple-icon.svg",
+  },
 };
 
 export default function RootLayout({

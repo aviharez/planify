@@ -67,7 +67,7 @@ function MotionReveal({ children }: { children: React.ReactNode }) {
 
 function MainNavigation({ view }: { view: MainView }) {
   return (
-    <nav aria-label="Navigasi utama" className="fixed inset-x-4 bottom-4 z-20 mx-auto flex max-w-md items-center justify-around rounded-2xl border border-ink/10 bg-cream/95 p-2 shadow-soft backdrop-blur sm:inset-x-auto sm:right-8 sm:left-auto sm:top-8 sm:bottom-auto sm:max-w-none sm:gap-1">
+    <nav aria-label="Navigasi utama" className="fixed inset-x-4 bottom-4 z-20 mx-auto flex max-w-3xl items-center justify-start gap-1 overflow-x-auto rounded-2xl border border-ink/10 bg-cream/95 p-2 shadow-soft backdrop-blur sm:inset-x-auto sm:right-8 sm:left-auto sm:top-8 sm:bottom-auto sm:max-w-none">
       {[
         ["hari-ini", "Hari Ini", "/hari-ini"],
         ["rencana", "Rencana", "/rencana"],
@@ -78,7 +78,7 @@ function MainNavigation({ view }: { view: MainView }) {
         <a
           key={key}
           href={href}
-          className={`min-h-11 rounded-xl px-3 text-sm font-semibold transition sm:px-4 ${view === key ? "bg-moss text-cream" : "text-ink/60 hover:bg-sage/60 hover:text-ink"}`}
+          className={`min-h-11 shrink-0 whitespace-nowrap rounded-xl px-2 text-xs font-semibold transition sm:px-4 sm:text-sm ${view === key ? "bg-moss text-cream" : "text-ink/60 hover:bg-sage/60 hover:text-ink"}`}
           aria-current={view === key ? "page" : undefined}
         >
           {label}
@@ -311,7 +311,7 @@ export default function MainExperience({ view, sessionKey }: { view: MainView; s
     });
     return () => { cancelled = true; };
   }, []);
-  if (loading || !data) return <main className="grid min-h-screen place-items-center bg-cream"><div className="h-10 w-10 rounded-full border-4 border-moss border-t-transparent soft-pulse" aria-label="Memuat Hari Ini" /></main>;
+  if (loading || !data) return <main className="grid min-h-screen place-items-center bg-cream"><div className="text-center" role="status" aria-live="polite"><div className="mx-auto h-10 w-10 rounded-full border-4 border-moss border-t-transparent soft-pulse" aria-hidden="true" /><p className="mt-4 text-sm font-semibold text-ink/60">Memuat Hari Ini...</p></div></main>;
   const activeData = data;
   async function saveSession(sessionKeyValue: string, status: Exclude<StudySessionStatus, "planned">, feedback?: { reason?: string; understanding?: number }) {
     const current = activeData.setup.studyPlan?.sessions.find((session) => session.sessionKey === sessionKeyValue);
