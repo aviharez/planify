@@ -39,11 +39,21 @@ export async function POST(request: Request) {
   }
   if (!input.planId)
     return NextResponse.json({ message: "Rencana sesi belum terverifikasi." }, { status: 400 });
+  const { data: semester } = await supabase
+    .from("semesters")
+    .select("id")
+    .eq("user_id", authData.user.id)
+    .eq("is_active", true)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!semester?.id) return NextResponse.json({ message: "Semester aktif belum tersedia." }, { status: 404 });
   const { data: plan } = await supabase
     .from("study_plans")
     .select("id")
     .eq("id", input.planId)
     .eq("user_id", authData.user.id)
+    .eq("semester_id", semester.id)
     .maybeSingle();
   if (!plan) return NextResponse.json({ message: "Rencana sesi tidak ditemukan." }, { status: 404 });
   try {

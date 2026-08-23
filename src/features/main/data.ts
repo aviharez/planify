@@ -2,6 +2,7 @@ import { z } from "zod";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { onboardingDataSchema } from "@/features/onboarding/state";
 import type { OnboardingData, StudyPlan, StudySession } from "@/features/onboarding/types";
+import { canOpenMainExperience } from "@/features/onboarding/lifecycle";
 
 export const ONBOARDING_STORAGE_KEY = "planify:onboarding:v1";
 
@@ -43,7 +44,7 @@ function readLocal() {
     const setup = onboardingDataSchema.parse(
       JSON.parse(window.localStorage.getItem(ONBOARDING_STORAGE_KEY) ?? "null"),
     ) as OnboardingData;
-    return setup.planActive && setup.studyPlan ? setup : null;
+    return setup.planActive && setup.studyPlan && canOpenMainExperience(setup) ? setup : null;
   } catch {
     return null;
   }
@@ -56,7 +57,7 @@ export async function loadMainData(supabase = createSupabaseBrowserClient()): Pr
   if (!authData.user) return local ? { setup: local, authenticated: false } : null;
   const { data: semester } = await supabase
     .from("semesters")
-    .select("setup_payload")
+    .select("id, setup_payload")
     .eq("user_id", authData.user.id)
     .eq("is_active", true)
     .order("updated_at", { ascending: false })
@@ -68,16 +69,20 @@ export async function loadMainData(supabase = createSupabaseBrowserClient()): Pr
   } catch {
     return null;
   }
-  if (!setup.planActive || !setup.studyPlan) return null;
+  if (!setup.planActive || !setup.studyPlan || !semester?.id) return null;
   const { data: remotePlan } = await supabase
     .from("study_plans")
-    .select("id, planning_period_start, planning_period_end, weekly_capacity_minutes, capacity_policy, priority_snapshot, generated_at, source_plan_id, adaptation_reason, change_summary")
+    .select("id, semester_id, planning_period_start, planning_period_end, weekly_capacity_minutes, capacity_policy, priority_snapshot, generated_at, source_plan_id, adaptation_reason, change_summary, preview_acknowledged_at")
     .eq("user_id", authData.user.id)
+    .eq("semester_id", semester.id)
     .eq("status", "active")
     .order("generated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  if (!remotePlan?.id) return { setup, authenticated: true };
+  const previewAcknowledgedAt = setup.previewAcknowledgedAt ?? remotePlan?.preview_acknowledged_at ?? undefined;
+  const hydratedSetup = { ...setup, previewAcknowledgedAt };
+  if (!canOpenMainExperience(hydratedSetup)) return null;
+  if (!remotePlan?.id) return { setup: hydratedSetup, authenticated: true };
   const { data: remoteSessions } = await supabase
     .from("study_sessions")
     .select("id, session_key, course_key, course_code, course_name, session_date, start_time, end_time, duration_minutes, status, priority_snapshot, study_method, study_goal, explanation, completed_at, source_session_id, change_reason")
@@ -87,7 +92,7 @@ export async function loadMainData(supabase = createSupabaseBrowserClient()): Pr
     .order("start_time", { ascending: true });
   const parsedSessions = z.array(remoteSessionSchema).safeParse(remoteSessions ?? []);
   if (!parsedSessions.success || parsedSessions.data.length === 0)
-    return { setup: { ...setup, studyPlan: { ...setup.studyPlan, remoteId: remotePlan.id } }, authenticated: true, remotePlanId: remotePlan.id };
+    return { setup: { ...hydratedSetup, studyPlan: { ...setup.studyPlan, remoteId: remotePlan.id } }, authenticated: true, remotePlanId: remotePlan.id };
   const { data: remoteFeedback } = await supabase
     .from("session_feedback")
     .select("study_session_id, reason, understanding, recorded_at")
@@ -140,7 +145,7 @@ export async function loadMainData(supabase = createSupabaseBrowserClient()): Pr
     changeSummary: Array.isArray(remotePlan.change_summary) ? remotePlan.change_summary as StudyPlan["changeSummary"] : undefined,
     sessions,
   };
-  return { setup: { ...setup, studyPlan }, authenticated: true, remotePlanId: remotePlan.id };
+  return { setup: { ...hydratedSetup, studyPlan }, authenticated: true, remotePlanId: remotePlan.id };
 }
 
 export function saveLocalMainData(setup: OnboardingData) {

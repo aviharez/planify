@@ -41,7 +41,7 @@ test.describe("setup lokal Planify", () => {
       .toBe("download.pdf");
   });
 
-  test("menyelesaikan setup dari PDF sampai landing Hari Ini", async ({ page }) => {
+  test("menyelesaikan setup dari PDF sampai preview lalu Hari Ini", async ({ page }) => {
     await startDemo(page);
     await page.getByRole("button", { name: "Lanjutkan" }).click();
     await expect(page.getByRole("heading", { name: "Mata Kuliah" })).toBeVisible();
@@ -76,10 +76,11 @@ test.describe("setup lokal Planify", () => {
 
     await expect(page.getByRole("heading", { name: "Ringkasan" })).toBeVisible();
     await page.getByRole("button", { name: "Buat Rencana Belajar" }).click();
-    await expect(page.getByText("Prioritas Belajar Siap")).toBeVisible({
+    await expect(page.getByRole("heading", { name: "Rencana Belajarmu Sudah Siap" })).toBeVisible({
       timeout: 30_000,
     });
-    await page.getByRole("link", { name: "Mulai dari Hari Ini" }).click();
+    await expect(page.getByText("Kalender Planify")).toBeVisible();
+    await page.getByRole("button", { name: "Mulai Gunakan Rencana" }).click();
 
     await expect(page).toHaveURL(/\/hari-ini$/);
     await expect(page.getByRole("heading", { name: "Hari Ini" })).toBeVisible({
@@ -90,5 +91,34 @@ test.describe("setup lokal Planify", () => {
 
     await page.reload();
     await expect(page.getByRole("heading", { name: "Hari Ini" })).toBeVisible();
+
+    await page.goto("/");
+    await expect(page).toHaveURL(/\/hari-ini$/);
+    await expect(page.getByRole("heading", { name: "Hari Ini" })).toBeVisible();
+
+    await page.goto("/profil");
+    await expect(page.getByText("Akun", { exact: true })).toBeVisible();
+    await expect(page.getByText("Semester Aktif", { exact: true })).toBeVisible();
+    await expect(page.getByText("Preferensi Belajar", { exact: true })).toBeVisible();
+    await expect(page.getByText("Integrasi", { exact: true })).toBeVisible();
+    await expect(page.getByText("Pengaturan Akun", { exact: true })).toBeVisible();
+    const previousSetup = await page.evaluate(() => JSON.parse(window.localStorage.getItem("planify:onboarding:v1") ?? "null"));
+    expect(previousSetup.courses.length).toBeGreaterThan(0);
+    await page.getByRole("button", { name: "Mulai Semester Baru" }).click();
+    await expect(page.getByRole("dialog", { name: "Mulai Semester Baru" })).toBeVisible();
+    await page.getByRole("button", { name: "Lanjutkan" }).click();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByRole("heading", { name: "KRS" })).toBeVisible();
+    const semesterState = await page.evaluate(() => ({
+      history: JSON.parse(window.localStorage.getItem("planify:semester-history:v1") ?? "[]"),
+      current: JSON.parse(window.localStorage.getItem("planify:onboarding:v1") ?? "null"),
+    }));
+    expect(semesterState.history).toHaveLength(1);
+    expect(semesterState.history[0].setup_payload).toEqual(previousSetup);
+    expect(semesterState.current.courses).toEqual([]);
+    expect(semesterState.current.classSchedules).toEqual({});
+    expect(semesterState.current.academicEvents).toEqual([]);
+    expect(semesterState.current.studyPlan).toBeUndefined();
+    expect(semesterState.current.planActive).toBe(false);
   });
 });

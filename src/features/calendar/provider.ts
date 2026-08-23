@@ -12,8 +12,14 @@ export type CalendarEvent = {
 
 export type GoogleCalendarEvent = {
   id?: string;
+  summary?: string;
+  description?: string;
+  start?: { date?: string; dateTime?: string; timeZone?: string };
+  end?: { date?: string; dateTime?: string; timeZone?: string };
   extendedProperties?: { private?: Record<string, string> };
 };
+
+export type GoogleCalendarListResponse = { items?: GoogleCalendarEvent[]; nextPageToken?: string };
 
 export type CalendarEventLink = {
   studySessionId: string;
@@ -116,6 +122,11 @@ export class GoogleCalendarProvider {
 
   get(calendarId: string, eventId: string) {
     return this.request(`/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`) as Promise<GoogleCalendarEvent>;
+  }
+
+  list(calendarId: string, timeMin: string, timeMax: string) {
+    const params = new URLSearchParams({ singleEvents: "true", orderBy: "startTime", maxResults: "250", timeMin, timeMax });
+    return this.request(`/calendars/${encodeURIComponent(calendarId)}/events?${params.toString()}`, { method: "GET" }) as Promise<GoogleCalendarListResponse>;
   }
 }
 

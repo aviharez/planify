@@ -80,6 +80,7 @@ export const onboardingDataSchema = z.object({
     }),
   ),
   planActive: z.boolean(),
+  previewAcknowledgedAt: z.string().nullable().optional(),
   krsExtraction: z
     .object({
       source: z.enum(["pdf-text", "ocr", "manual", "demo"]),

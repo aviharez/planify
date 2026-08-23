@@ -132,11 +132,21 @@ export async function persistAdaptedPlan(input: unknown): Promise<ActionResult> 
   const { supabase, user } = await getAuthenticatedContext();
   if (!supabase) return { ok: false, message: "Layanan akun belum tersedia." };
   if (!user) return { ok: false, message: "Kamu perlu masuk terlebih dahulu." };
+  const { data: activeSemester } = await supabase
+    .from("semesters")
+    .select("id")
+    .eq("user_id", user.id)
+    .eq("is_active", true)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!activeSemester?.id) return { ok: false, message: "Semester aktif belum tersedia." };
   const { data: source } = await supabase
     .from("study_plans")
     .select("id, semester_id")
     .eq("id", parsed.data.sourcePlanId)
     .eq("user_id", user.id)
+    .eq("semester_id", activeSemester.id)
     .eq("status", "active")
     .maybeSingle();
   if (!source) return { ok: false, message: "Rencana aktif tidak ditemukan." };

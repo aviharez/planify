@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   CalendarProviderError,
+  GoogleCalendarProvider,
   deterministicCalendarEventId,
   isFutureLocalSession,
   mapStudySessionToCalendarEvent,
@@ -12,6 +13,20 @@ import {
 const timing = { today: "2026-08-24", currentTime: "19:00" };
 const session = { id: "row-1", sessionKey: "s-1", courseName: "Algoritma", date: "2026-08-25", startTime: "19:00", endTime: "19:45", studyGoal: "Latih konsep", status: "planned" as const };
 const owned = (sessionKey: string) => ({ id: "event", extendedProperties: { private: { planifyManaged: "true", planifySessionKey: sessionKey } } });
+
+test("overlay Google hanya melakukan GET saat listing dan tidak menyentuh update atau delete", async () => {
+  const calls: Array<{ method: string; url: string }> = [];
+  const provider = new GoogleCalendarProvider("token", async (input, init) => {
+    calls.push({ method: init?.method ?? "", url: String(input) });
+    return new Response(JSON.stringify({ items: [{ id: "external" }] }), { status: 200, headers: { "content-type": "application/json" } });
+  });
+  const listed = await provider.list("primary", "2026-08-24T00:00:00.000Z", "2026-08-31T00:00:00.000Z");
+  assert.equal(listed.items?.[0]?.id, "external");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.method, "GET");
+  assert.match(calls[0]?.url ?? "", /\/calendars\/primary\/events\?/);
+  assert.equal(calls.some((call) => call.method === "PUT" || call.method === "DELETE"), false);
+});
 
 test("pemetaan event menyimpan timezone dan metadata kepemilikan aplikasi", () => {
   const event = mapStudySessionToCalendarEvent(session, "Asia/Jakarta");

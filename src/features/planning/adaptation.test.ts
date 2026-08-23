@@ -123,3 +123,21 @@ test("lineage UUID tetap terpetakan pada adaptasi berikutnya", () => {
   assert.equal(resolveSourceSessionId(sourceSessions, "row-uuid", "new-key"), "row-uuid");
   assert.equal(resolveSourceSessionId(sourceSessions, undefined, sourceSessions[0].session_key), "row-uuid");
 });
+
+test("replanFuture mempertahankan sesi selesai dan mengganti pekerjaan masa depan", () => {
+  const original = makePlan();
+  const [completed, future] = original.sessions;
+  assert.ok(completed && future);
+  const oldFutureId = "future-old-session";
+  const plan = {
+    ...original,
+    sessions: [
+      { ...completed, date: "2026-08-23", status: "completed" as const, completedAt: "2026-08-23T13:00:00.000Z" },
+      { ...future, id: oldFutureId, sessionKey: oldFutureId, date: "2026-08-25", status: "planned" as const },
+    ],
+  };
+  const result = adaptStudyPlan({ data, plan, today: "2026-08-24", evaluation: { perceivedLoad: 3, realism: "Ya" }, replanFuture: true });
+  assert.equal(result.plan.sessions.find((session) => session.id === completed.id)?.status, "completed");
+  assert.equal(result.plan.sessions.some((session) => session.id === oldFutureId), false);
+  assert.ok(result.plan.sessions.some((session) => session.date >= "2026-08-24" && session.status === "planned"));
+});

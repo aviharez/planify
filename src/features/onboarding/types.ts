@@ -101,6 +101,8 @@ export type OnboardingData = {
   evaluations: Record<string, CourseEvaluation>;
   academicEvents: AcademicEvent[];
   planActive: boolean;
+  /** Null means the first generated plan is waiting for the preview acknowledgement. */
+  previewAcknowledgedAt?: string | null;
   krsExtraction?: KrsExtractionMetadata;
   krsStoragePath?: string;
   krsDocumentId?: string;

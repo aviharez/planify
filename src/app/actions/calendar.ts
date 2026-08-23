@@ -8,6 +8,9 @@ import { refreshGoogleAccessToken } from "@/features/calendar/oauth";
 import { CalendarProviderError, GoogleCalendarProvider, removeManagedFutureEvent, syncManagedEvents, timeInTimeZone } from "@/features/calendar/provider";
 import { dateInTimeZone } from "@/features/planning/priority";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { mapGoogleEventToCalendarEvent } from "@/features/calendar/transform";
+import type { PlanifyCalendarEvent } from "@/features/calendar/types";
+import { z } from "zod";
 
 type CalendarActionResult = { ok: boolean; message: string };
 
@@ -52,10 +55,10 @@ export async function syncCalendar(): Promise<CalendarActionResult> {
     .eq("provider", "google")
     .maybeSingle();
   if (!connection?.id) return { ok: false, message: "Sambungkan Google Calendar terlebih dahulu." };
-  const { data: semester } = await supabase.from("semesters").select("setup_payload").eq("user_id", user.id).eq("is_active", true).order("updated_at", { ascending: false }).limit(1).maybeSingle();
+  const { data: semester } = await supabase.from("semesters").select("id, setup_payload").eq("user_id", user.id).eq("is_active", true).order("updated_at", { ascending: false }).limit(1).maybeSingle();
   const setup = onboardingDataSchema.safeParse(semester?.setup_payload);
   if (!setup.success || !setup.data.planActive) return { ok: false, message: "Rencana aktif belum tersedia untuk disinkronkan." };
-  const { data: plan } = await supabase.from("study_plans").select("id").eq("user_id", user.id).eq("status", "active").order("generated_at", { ascending: false }).limit(1).maybeSingle();
+  const { data: plan } = await supabase.from("study_plans").select("id").eq("user_id", user.id).eq("semester_id", semester?.id ?? "").eq("status", "active").order("generated_at", { ascending: false }).limit(1).maybeSingle();
   if (!plan?.id) return { ok: false, message: "Rencana belajar aktif belum tersedia." };
   const { data: sessions } = await supabase.from("study_sessions").select("id, session_key, course_name, session_date, start_time, end_time, study_goal, status").eq("study_plan_id", plan.id).eq("user_id", user.id);
   const { data: links } = await supabase.from("calendar_event_links").select("study_session_id, session_key, google_event_id, google_calendar_id").eq("connection_id", connection.id).eq("user_id", user.id);
@@ -165,4 +168,35 @@ export async function disconnectCalendar(): Promise<CalendarActionResult> {
   if (removed.error) return { ok: false, message: "Koneksi kalender belum berhasil dilepas." };
   revalidatePath("/profil");
   return { ok: true, message: "Google Calendar dilepas dari Planify." };
+}
+
+const overlayRangeSchema = z.object({ start: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), end: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) });
+
+/** Lists external events only; this path never reads or writes managed event links. */
+export async function getCalendarOverlay(input: unknown): Promise<{ ok: boolean; events: PlanifyCalendarEvent[]; message?: string }> {
+  const parsed = overlayRangeSchema.safeParse(input);
+  if (!parsed.success || parsed.data.end < parsed.data.start) return { ok: false, events: [], message: "Rentang kalender belum valid." };
+  const { supabase, user } = await context();
+  if (!supabase || !user) return { ok: true, events: [] };
+  const { data: connection } = await supabase.from("calendar_connections").select("calendar_id, access_token_ciphertext, refresh_token_ciphertext, access_token_expires_at").eq("user_id", user.id).eq("provider", "google").maybeSingle();
+  if (!connection) return { ok: true, events: [] };
+  try {
+    let accessToken = decryptCalendarToken(connection.access_token_ciphertext);
+    let refreshedCiphertext: string | undefined;
+    let expiresIn = 3600;
+    if (connection.access_token_expires_at && Date.parse(connection.access_token_expires_at) <= Date.now() + 60_000) {
+      if (!connection.refresh_token_ciphertext) return { ok: false, events: [], message: "Sesi Google perlu disambungkan ulang." };
+      const refreshed = await refreshGoogleAccessToken(decryptCalendarToken(connection.refresh_token_ciphertext));
+      accessToken = refreshed.access_token;
+      refreshedCiphertext = encryptCalendarToken(accessToken);
+      expiresIn = refreshed.expires_in ?? 3600;
+    }
+    const provider = new GoogleCalendarProvider(accessToken);
+    const listing = await provider.list(connection.calendar_id, `${parsed.data.start}T00:00:00Z`, `${parsed.data.end}T23:59:59Z`);
+    const events = (listing.items ?? []).map(mapGoogleEventToCalendarEvent).filter((event): event is PlanifyCalendarEvent => Boolean(event));
+    if (refreshedCiphertext) await supabase.from("calendar_connections").update({ access_token_ciphertext: refreshedCiphertext, access_token_expires_at: new Date(Date.now() + expiresIn * 1000).toISOString(), updated_at: new Date().toISOString() }).eq("user_id", user.id).eq("provider", "google");
+    return { ok: true, events };
+  } catch {
+    return { ok: false, events: [], message: "Acara Google belum berhasil dimuat." };
+  }
 }

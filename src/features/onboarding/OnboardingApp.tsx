@@ -52,6 +52,10 @@ import {
   onboardingDataSchema,
   previousStep,
 } from "./state";
+import { resolveLifecycle } from "./lifecycle";
+import { acknowledgePlanPreview } from "@/app/actions/lifecycle";
+import CalendarView from "@/features/calendar/CalendarView";
+import { calendarRangeForPlan, combineCalendarEvents } from "@/features/calendar/transform";
 import {
   extractKrsFile,
   KrsExtractionService,
@@ -601,6 +605,7 @@ async function storeStudyPlan(
       planning_period_start: plan.planningPeriod.start,
       planning_period_end: plan.planningPeriod.end,
       generated_at: plan.generatedAt,
+      preview_acknowledged_at: null,
     })
     .select("id")
     .single();
@@ -1988,10 +1993,12 @@ function SummaryCard({
 function PlanReady({
   data,
   onReview,
+  onAcknowledge,
   warning,
 }: {
   data: OnboardingData;
   onReview: () => void;
+  onAcknowledge: () => void;
   warning?: string;
 }) {
   const totalCredits = data.courses.reduce(
@@ -2003,39 +2010,30 @@ function PlanReady({
   const totalMinutes = upcoming.reduce((sum, session) => sum + session.duration, 0);
   const nextSession = upcoming[0];
   return (
-    <div className="mx-auto max-w-3xl rounded-[2rem] border border-ink/15 bg-white/80 p-6 shadow-soft sm:p-10">
+    <div className="mx-auto max-w-6xl rounded-[2rem] border border-ink/15 bg-white/80 p-6 shadow-soft sm:p-10">
       <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-sage text-moss">
         <Sparkles size={30} />
       </div>
-      <p className="mt-8 text-sm font-semibold text-moss">
-        Prioritas Belajar Siap
-      </p>
-      <h1 className="mt-3 max-w-2xl text-4xl font-bold leading-[0.98] tracking-[-0.06em] sm:text-6xl">
-        Prioritas belajar yang punya ruang untuk hidupmu.
+      <p className="mt-8 text-sm font-semibold text-moss">Rencana empat minggu</p>
+      <h1 className="mt-3 max-w-6xl text-4xl font-bold leading-[0.98] tracking-[-0.06em] sm:text-6xl">
+        Rencana Belajarmu Sudah Siap
       </h1>
       <p className="mt-6 max-w-xl text-base leading-7 text-ink/65">
-        Informasi {data.courses.length} mata kuliah dan {totalCredits} SKS sudah
-        dirangkum menjadi rencana belajar empat minggu yang bisa kamu jalani.
+        Empat minggu ke depan sudah disiapkan berdasarkan jadwal, kondisi, dan prioritas belajarmu.
       </p>
       {warning && (
         <p role="status" className="mt-5 rounded-xl bg-sand p-3 text-sm leading-6 text-ink">
           {warning}
         </p>
       )}
-      <div className="mt-8 space-y-3 rounded-2xl bg-cream p-5">
-        <p className="flex items-center gap-3 text-sm font-semibold">
-          <Check size={17} className="text-moss" />
-          Prioritas mata kuliah dihitung dari kondisi kamu
-        </p>
-        <p className="flex items-center gap-3 text-sm font-semibold">
-          {warning ? <CircleHelp size={17} className="text-coral" /> : <Check size={17} className="text-moss" />}
-          {warning ? "Rencana lokal tetap tersedia" : "Rencana empat minggu tersimpan"}
-        </p>
-        <p className="flex items-center gap-3 text-sm font-semibold">
-          <Check size={17} className="text-moss" />
-          {upcoming.length} sesi terjadwal · {Math.floor(totalMinutes / 60)} jam {totalMinutes % 60} menit
-        </p>
+      <div className="mt-8 grid grid-flow-dense grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="rounded-2xl bg-moss p-5 text-cream"><p className="text-sm text-cream/65">Mata kuliah</p><p className="mt-2 text-3xl font-bold">{data.courses.length}</p></div>
+        <div className="rounded-2xl bg-sage p-5"><p className="text-sm text-ink/60">SKS</p><p className="mt-2 text-3xl font-bold">{totalCredits}</p></div>
+        <div className="rounded-2xl bg-coral/10 p-5"><p className="text-sm text-ink/60">Sesi</p><p className="mt-2 text-3xl font-bold">{upcoming.length}</p></div>
+        <div className="rounded-2xl bg-cream p-5"><p className="text-sm text-ink/60">Waktu terencana</p><p className="mt-2 text-2xl font-bold">{Math.floor(totalMinutes / 60)} jam {totalMinutes % 60 ? `${totalMinutes % 60} menit` : ""}</p></div>
       </div>
+      {plan && <div className="mt-8"><CalendarView events={combineCalendarEvents({ courses: data.courses, classSchedules: data.classSchedules, sessions: plan.sessions, academicEvents: data.academicEvents }, calendarRangeForPlan(plan.planningPeriod.start, plan.planningPeriod))} initialDate={plan.planningPeriod.start} range={calendarRangeForPlan(plan.planningPeriod.start, plan.planningPeriod)} /></div>}
+      {plan && <section className="mt-8 rounded-2xl bg-cream p-5"><p className="text-sm font-semibold text-moss">Prioritas Utama</p><div className="mt-3 flex snap-x gap-3 overflow-x-auto pb-1 sm:grid sm:grid-cols-3 sm:overflow-visible">{[...plan.prioritySnapshot.courseFactors].sort((a, b) => b.score - a.score).slice(0, 3).map((factor, index) => <div key={factor.courseId} className="min-w-[12rem] snap-start rounded-xl bg-white/70 p-3 sm:min-w-0"><p className="text-xs text-ink/50">{index + 1}</p><p className="mt-1 text-sm font-bold">{factor.name}</p></div>)}</div></section>}
       {nextSession && (
         <div className="mt-5 rounded-2xl border border-coral/20 bg-coral/5 p-5">
           <p className="text-sm font-semibold text-coral">Sesi berikutnya</p>
@@ -2053,13 +2051,14 @@ function PlanReady({
         </div>
       )}
       <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-        <a
-          href="/hari-ini"
+        <button
+          type="button"
+          onClick={onAcknowledge}
           className="flex min-h-13 flex-1 items-center justify-center gap-2 rounded-xl bg-moss px-5 py-3 font-semibold text-cream transition hover:bg-ink"
         >
-          Mulai dari Hari Ini
+          Mulai Gunakan Rencana
           <ArrowRight size={17} />
-        </a>
+        </button>
         <button
           type="button"
           onClick={onReview}
@@ -2133,9 +2132,14 @@ export default function OnboardingApp() {
     async function hydrate() {
       if (!supabase) {
         if (localSetup) {
-          setData({ ...localSetup, timezone, planActive: Boolean(localSetup.planActive && localSetup.studyPlan) });
+          const nextData = { ...localSetup, timezone, planActive: Boolean(localSetup.planActive && localSetup.studyPlan) };
+          if (resolveLifecycle(nextData) === "active-use") {
+            window.location.replace("/hari-ini");
+            return;
+          }
+          setData(nextData);
           setDemoStarted(true);
-          setGenerationReady(Boolean(localSetup.planActive && localSetup.studyPlan));
+          setGenerationReady(Boolean(nextData.planActive && nextData.studyPlan));
         } else {
           setData((current) => ({ ...current, timezone }));
         }
@@ -2161,7 +2165,7 @@ export default function OnboardingApp() {
 
       const { data: semester } = await supabase
         .from("semesters")
-        .select("setup_payload")
+        .select("id, setup_payload")
         .eq("user_id", sessionData.session.user.id)
         .eq("is_active", true)
         .order("updated_at", { ascending: false })
@@ -2175,13 +2179,20 @@ export default function OnboardingApp() {
       } catch {
         remoteSetup = null;
       }
+      const { data: remotePlan } = semester?.id
+        ? await supabase.from("study_plans").select("id, preview_acknowledged_at").eq("user_id", sessionData.session.user.id).eq("semester_id", semester.id).eq("status", "active").order("generated_at", { ascending: false }).limit(1).maybeSingle()
+        : { data: null };
       if (!cancelled) {
         const nextData = remoteSetup
-          ? { ...remoteSetup, timezone, planActive: Boolean(remoteSetup.planActive && remoteSetup.studyPlan) }
+          ? { ...remoteSetup, timezone, previewAcknowledgedAt: remoteSetup.previewAcknowledgedAt ?? remotePlan?.preview_acknowledged_at ?? undefined, planActive: Boolean(remoteSetup.planActive && remoteSetup.studyPlan) }
           : { ...initialOnboardingData, timezone };
+        if (resolveLifecycle(nextData) === "active-use") {
+          window.location.replace("/hari-ini");
+          return;
+        }
         setData(nextData);
         setDemoStarted(true);
-        setGenerationReady(Boolean(remoteSetup?.planActive && remoteSetup.studyPlan));
+        setGenerationReady(Boolean(nextData.planActive && nextData.studyPlan));
         setAuthenticated(true);
         setRemoteReady(true);
         setHydrated(true);
@@ -2241,7 +2252,7 @@ export default function OnboardingApp() {
     if (!authData.user) return;
     const { data: semester } = await supabase
       .from("semesters")
-      .select("setup_payload")
+      .select("id, setup_payload")
       .eq("user_id", authData.user.id)
       .eq("is_active", true)
       .order("updated_at", { ascending: false })
@@ -2256,14 +2267,22 @@ export default function OnboardingApp() {
       remoteSetup = null;
     }
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const { data: remotePlan } = semester?.id
+      ? await supabase.from("study_plans").select("id, preview_acknowledged_at").eq("user_id", authData.user.id).eq("semester_id", semester.id).eq("status", "active").order("generated_at", { ascending: false }).limit(1).maybeSingle()
+      : { data: null };
+    const nextData = remoteSetup
+      ? { ...remoteSetup, timezone, previewAcknowledgedAt: remoteSetup.previewAcknowledgedAt ?? remotePlan?.preview_acknowledged_at ?? undefined, planActive: Boolean(remoteSetup.planActive && remoteSetup.studyPlan) }
+      : { ...initialOnboardingData, timezone };
+    if (resolveLifecycle(nextData) === "active-use") {
+      window.location.replace("/hari-ini");
+      return;
+    }
     setData(
-      remoteSetup
-        ? { ...remoteSetup, timezone, planActive: Boolean(remoteSetup.planActive && remoteSetup.studyPlan) }
-        : { ...initialOnboardingData, timezone },
+      nextData,
     );
     setDemoStarted(true);
     setAuthenticated(true);
-    setGenerationReady(Boolean(remoteSetup?.planActive && remoteSetup.studyPlan));
+    setGenerationReady(Boolean(nextData.planActive && nextData.studyPlan));
     setRemoteReady(true);
   };
   const logout = async () => {
@@ -2312,6 +2331,7 @@ export default function OnboardingApp() {
     setData((current) => ({
       ...current,
       planActive: true,
+      previewAcknowledgedAt: null,
       planningSnapshot: snapshot,
       studyPlan: plan,
     }));
@@ -2378,6 +2398,18 @@ export default function OnboardingApp() {
     setGenerationStatus("ready");
     setGenerationReady(true);
   };
+  const acknowledgePreview = async () => {
+    const acknowledgedAt = new Date().toISOString();
+    const result = await acknowledgePlanPreview(data.studyPlan?.remoteId);
+    if (!result.ok) {
+      setGenerationWarning(result.message);
+      return;
+    }
+    const setup = { ...data, previewAcknowledgedAt: result.acknowledgedAt ?? acknowledgedAt };
+    setData(setup);
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(setup));
+    window.location.replace("/hari-ini");
+  };
 
   if (!hydrated)
     return (
@@ -2438,7 +2470,7 @@ export default function OnboardingApp() {
             </div>
           </header>
           <div className="mt-16">
-            <PlanReady data={data} onReview={reviewSummary} warning={generationWarning} />
+            <PlanReady data={data} onReview={reviewSummary} onAcknowledge={() => void acknowledgePreview()} warning={generationWarning} />
           </div>
         </div>
       </main>

@@ -8,12 +8,15 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { dateInTimeZone } from "@/features/planning/priority";
 import type { OnboardingData, StudySession, StudySessionStatus } from "@/features/onboarding/types";
 import { updateStudySession } from "@/app/actions/study";
+import { getCalendarOverlay } from "@/app/actions/calendar";
 import { persistAdaptedPlan, saveWeeklyEvaluation } from "@/app/actions/adaptation";
 import { adaptStudyPlan, type WeeklyEvaluation } from "@/features/planning/adaptation";
 import { canTransitionSession, shouldAskUnderstanding, transitionSession } from "@/features/study-session/state";
 import { loadMainData, saveLocalMainData, type MainData } from "./data";
 import ProgressView from "@/features/progress/ProgressView";
 import ProfileView from "@/features/profile/ProfileView";
+import CalendarView from "@/features/calendar/CalendarView";
+import { calendarRangeForPlan, combineCalendarEvents } from "@/features/calendar/transform";
 
 type MainView = "hari-ini" | "rencana" | "mata-kuliah" | "progres" | "profil" | "sesi";
 
@@ -222,18 +225,17 @@ function PlanView({ data, onLogout, onAdapt }: { data: MainData; onLogout: () =>
   const { setup } = data;
   const plan = setup.studyPlan!;
   const today = dateInTimeZone(new Date(), setup.timezone);
-  const start = weekStart(today);
-  const days = Array.from({ length: 7 }, (_, index) => nextDate(start, index));
+  const range = calendarRangeForPlan(today, plan.planningPeriod);
+  const rangeStart = range.start;
+  const rangeEnd = range.end;
+  const [overlay, setOverlay] = useState<import("@/features/calendar/types").PlanifyCalendarEvent[]>([]);
+  useEffect(() => { void getCalendarOverlay({ start: rangeStart, end: rangeEnd }).then((result) => { if (result.ok) setOverlay(result.events); }); }, [rangeStart, rangeEnd]);
+  const events = combineCalendarEvents({ courses: setup.courses, classSchedules: setup.classSchedules, sessions: plan.sessions, academicEvents: setup.academicEvents }, range, overlay);
   return (
     <PageFrame data={data} view="rencana" onLogout={onLogout}>
       <MotionReveal>
-        <header data-main-reveal><p className="text-sm font-semibold text-coral">Rencana belajar</p><h1 className="mt-3 max-w-6xl text-5xl font-bold leading-[0.95] tracking-[-0.07em]">Minggu ini, satu langkah demi satu.</h1><p className="mt-5 text-base text-ink/60">{formatDate(days[0], setup.timezone, { day: "numeric", month: "long" })} – {formatDate(days[6], setup.timezone, { day: "numeric", month: "long", year: "numeric" })}</p></header>
-        <div className="mt-10 space-y-3">
-          {days.map((date) => {
-            const sessions = plan.sessions.filter((session) => session.date === date);
-            return <section key={date} className="rounded-[1.5rem] border border-ink/10 bg-white/70 p-5" data-main-reveal><div className="flex items-center justify-between gap-4"><h2 className="text-lg font-bold">{formatDate(date, setup.timezone, { weekday: "long", day: "numeric", month: "long" })}</h2><span className="text-sm text-ink/50">{sessions.length} sesi</span></div>{sessions.length ? <div className="mt-4 space-y-2">{sessions.map((session) => <a key={session.sessionKey} href={`/sesi/${encodeURIComponent(session.sessionKey)}`} className="flex items-center justify-between gap-3 rounded-xl bg-cream p-3 transition hover:bg-sage/50"><span className="min-w-0"><span className="block text-sm font-semibold text-coral">{session.startTime} · {session.duration} menit</span><span className="mt-1 block truncate font-semibold">{session.courseName}</span></span><span className="text-ink/40"><ChevronRight size={18} /></span></a>)}</div> : <p className="mt-3 text-sm text-ink/50">Belum ada sesi pada hari ini.</p>}</section>;
-          })}
-        </div>
+        <header data-main-reveal><p className="text-sm font-semibold text-coral">Rencana belajar</p><h1 className="mt-3 max-w-6xl text-5xl font-bold leading-[0.95] tracking-[-0.07em]">Kalender yang menjaga langkahmu tetap terlihat.</h1><p className="mt-5 text-base text-ink/60">Kuliah, sesi belajar, dan agenda akademik dalam satu ruang.</p></header>
+        <div className="mt-10" data-main-reveal><CalendarView events={events} initialDate={today} range={range} /></div>
         {plan.changeSummary && plan.changeSummary.length > 0 && <aside className="mt-10 rounded-[1.5rem] border border-coral/30 bg-coral/10 p-5" role="status" data-main-reveal><p className="text-sm font-semibold text-coral">Rencanamu Diperbarui</p><p className="mt-2 text-sm leading-6 text-ink/70">{plan.adaptationReason}</p><ul className="mt-4 space-y-2 text-sm leading-6 text-ink/75">{plan.changeSummary.map((change) => <li key={change.sessionKey} className="border-t border-coral/15 pt-2 first:border-0 first:pt-0"><span className="font-semibold">{change.courseName}</span> · {change.reason}</li>)}</ul></aside>}
         <WeeklyEvaluationForm data={data} onSubmit={onAdapt} />
         <p className="mt-6 text-sm leading-6 text-ink/55">Rencana ke depan tetap bisa berubah ketika kamu memberi kabar tentang ritmemu.</p>
@@ -366,6 +368,6 @@ export default function MainExperience({ view, sessionKey }: { view: MainView; s
   }
   if (view === "sesi") return <SessionView data={data} sessionKey={sessionKey ? decodeURIComponent(sessionKey) : ""} onSave={saveSession} onLogout={logout} />;
   if (view === "progres") return <PageFrame data={data} view={view} onLogout={logout}><MotionReveal><ProgressView data={data} /></MotionReveal></PageFrame>;
-  if (view === "profil") return <PageFrame data={data} view={view} onLogout={logout}><MotionReveal><ProfileView data={data} /></MotionReveal></PageFrame>;
+  if (view === "profil") return <PageFrame data={data} view={view} onLogout={logout}><MotionReveal><ProfileView data={data} onLogout={logout} /></MotionReveal></PageFrame>;
   return view === "rencana" ? <PlanView data={data} onLogout={logout} onAdapt={adaptPlan} /> : view === "mata-kuliah" ? <CoursesView data={data} onLogout={logout} /> : <TodayView data={data} onLogout={logout} />;
 }

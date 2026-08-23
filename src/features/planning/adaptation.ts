@@ -41,7 +41,7 @@ export function resolveSourceSessionId(
   return sourceIds.get(sourceSessionId ?? sessionKey) ?? null;
 }
 
-type AdaptationInput = {
+export type AdaptationInput = {
   data: Pick<
     OnboardingData,
     | "courses"
@@ -57,6 +57,8 @@ type AdaptationInput = {
   plan: StudyPlan;
   today: string;
   evaluation?: WeeklyEvaluation;
+  /** Rebuilds only safe future planned work while keeping completed and past history. */
+  replanFuture?: boolean;
 };
 
 function clamp(value: number, min = 0, max = 1) {
@@ -145,7 +147,12 @@ export function adaptStudyPlan(input: AdaptationInput): AdaptationResult {
       ? 1.05
       : 1;
   const historical = input.plan.sessions.filter((session) => session.date < input.today || session.status !== "planned");
-  const futurePlanned = input.plan.sessions.filter((session) => session.date >= input.today && session.status === "planned");
+  const futurePlanned = input.replanFuture ? [] : input.plan.sessions.filter((session) => session.date >= input.today && session.status === "planned");
+  if (input.replanFuture) {
+    for (const session of input.plan.sessions) {
+      if (session.date >= input.today && session.status === "planned") remainingMinutes[session.courseId] = (remainingMinutes[session.courseId] ?? 0) + session.duration;
+    }
+  }
   const fresh = generateStudyPlan({
     courses: input.data.courses,
     availability: input.data.availability,

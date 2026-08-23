@@ -11,7 +11,7 @@ test("akun yang sudah sign-out tetap dapat membuka rencana lokal saat Supabase t
   const evaluations = { "course-1": { understanding: 3, difficulty: 3 } };
   const snapshot = buildPlanningSnapshot({ courses, evaluations, academicEvents: [], availability }, { today: "2026-08-23" });
   const studyPlan = generateStudyPlan({ courses, availability, classSchedules: {}, focusPeriods: ["Malam"], focusDuration: 45, activityDensity: "Seimbang", procrastination: "Kadang-kadang", academicEvents: [], snapshot, today: "2026-08-23" });
-  const setup: OnboardingData = { ...initialOnboardingData, timezone: "Asia/Jakarta", krsFileName: "download.pdf", courses, availability, evaluations, planActive: true, studyPlan };
+  const setup: OnboardingData = { ...initialOnboardingData, step: 5, timezone: "Asia/Jakarta", krsFileName: "download.pdf", courses, availability, evaluations, planActive: true, studyPlan };
   const previousWindow = (globalThis as { window?: unknown }).window;
   Object.defineProperty(globalThis, "window", { configurable: true, value: { localStorage: { getItem: (key: string) => key === ONBOARDING_STORAGE_KEY ? JSON.stringify(setup) : null } } });
   const fakeSupabase = { auth: { getUser: async () => ({ data: { user: null } }) } } as unknown as NonNullable<Parameters<typeof loadMainData>[0]>;
