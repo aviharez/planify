@@ -305,6 +305,69 @@ function PageFrame({ data, view, onLogout, hideNavigation = false, children }: {
   return <main className="min-h-screen max-w-full overflow-x-hidden bg-cream px-4 pb-[calc(7rem+env(safe-area-inset-bottom))] pt-5 text-ink sm:px-8 sm:pt-8 lg:px-10 lg:pb-[calc(9rem+env(safe-area-inset-bottom))] lg:pt-5"><div className="mx-auto max-w-6xl"><header className="flex items-center justify-between gap-4 lg:border-b lg:border-ink/10 lg:pb-6"><a href="/hari-ini" className="flex items-center gap-2 text-lg font-bold tracking-[-0.04em] transition hover:text-moss"><span className="grid h-9 w-9 place-items-center rounded-xl bg-moss text-cream"><Leaf size={18} /></span>Planify</a><div className="flex items-center gap-3"><span className="hidden text-xs text-ink/50 sm:inline" title={data.setup.timezone}>{data.setup.timezone}</span>{supabase && <button type="button" onClick={onLogout} className="flex min-h-10 items-center gap-2 rounded-xl border border-ink/15 bg-white/70 px-3 text-sm font-semibold transition hover:bg-sage"><LogOut size={15} aria-hidden="true" /> Keluar</button>}</div></header>{!hideNavigation && <MainNavigation view={view} />}<div className="mt-10">{children}</div></div></main>;
 }
 
+const loadingLabels: Record<MainView, string> = {
+  "hari-ini": "Memuat Hari Ini...",
+  rencana: "Memuat Rencana...",
+  "mata-kuliah": "Memuat Mata Kuliah...",
+  progres: "Memuat Progres...",
+  profil: "Memuat Profil...",
+  sesi: "Memuat Sesi...",
+};
+
+function LoadingBar({ className, tone = "bg-ink/10" }: { className: string; tone?: string }) {
+  return <div className={`rounded-xl ${tone} soft-pulse ${className}`} />;
+}
+
+function MainLoading({ view }: { view: MainView }) {
+  const loadingLabel = loadingLabels[view];
+  const showNavigation = view !== "sesi";
+  return (
+    <main className="min-h-[100dvh] max-w-full overflow-x-hidden bg-cream px-4 pb-[calc(7rem+env(safe-area-inset-bottom))] pt-5 text-ink sm:px-8 sm:pt-8 lg:px-10 lg:pb-[calc(9rem+env(safe-area-inset-bottom))] lg:pt-5" aria-busy="true">
+      <div className="mx-auto max-w-6xl">
+        <header className="flex items-center justify-between gap-4 lg:border-b lg:border-ink/10 lg:pb-6">
+          <a href="/hari-ini" className="flex items-center gap-2 text-lg font-bold tracking-[-0.04em] transition hover:text-moss">
+            <span className="grid h-9 w-9 place-items-center rounded-xl bg-moss text-cream"><Leaf size={18} /></span>
+            Planify
+          </a>
+        </header>
+        {showNavigation && <MainNavigation view={view} />}
+        <p className="mt-10 text-sm font-semibold text-coral" role="status" aria-live="polite">{loadingLabel}</p>
+        <div aria-hidden="true" className="mt-4">
+          {view === "hari-ini" && <>
+            <section className="grid gap-6 lg:grid-cols-[1.1fr_.9fr] lg:items-end">
+              <div><LoadingBar className="h-12 max-w-3xl rounded-2xl sm:h-16" tone="bg-moss/15" /><LoadingBar className="mt-4 h-5 w-56 rounded-full" /></div>
+              <div className="rounded-[1.5rem] bg-moss p-5"><LoadingBar className="h-4 w-32 rounded-full" tone="bg-cream/25" /><LoadingBar className="mt-3 h-9 w-48" tone="bg-cream/20" /><div className="mt-5 h-2 rounded-full bg-cream/20"><LoadingBar className="h-full w-2/5 rounded-full" tone="bg-coral" /></div></div>
+            </section>
+            <section className="mt-10 grid gap-5 lg:grid-cols-[.42fr_1fr]"><div className="rounded-[1.5rem] bg-coral p-5"><LoadingBar className="h-4 w-32 rounded-full" tone="bg-white/35" /><LoadingBar className="mt-4 h-14 w-28 rounded-2xl" tone="bg-white/25" /><LoadingBar className="mt-3 h-4 w-20 rounded-full" tone="bg-white/30" /></div><div className="rounded-[1.5rem] border border-ink/10 bg-white/80 p-5"><div className="flex items-start justify-between gap-4"><div className="min-w-0 flex-1"><LoadingBar className="h-4 w-36 rounded-full" tone="bg-coral/25" /><LoadingBar className="mt-3 h-7 max-w-sm" /></div><LoadingBar className="h-6 w-20 rounded-full" tone="bg-sage/70" /></div><LoadingBar className="mt-5 h-4 w-32 rounded-full" tone="bg-moss/15" /><LoadingBar className="mt-2 h-4 max-w-md rounded-full" /></div></section>
+            <section className="mt-10 grid gap-4 sm:grid-cols-2"><div className="rounded-[1.5rem] border border-ink/10 bg-sand p-5"><LoadingBar className="h-4 w-32 rounded-full" tone="bg-moss/20" /><LoadingBar className="mt-4 h-6 w-48" /><LoadingBar className="mt-3 h-4 w-28 rounded-full" /></div><div className="rounded-[1.5rem] border border-ink/10 bg-white/70 p-5"><LoadingBar className="h-4 w-32 rounded-full" tone="bg-moss/20" /><LoadingBar className="mt-4 h-6 w-44" /><LoadingBar className="mt-3 h-4 max-w-xs rounded-full" /></div></section>
+          </>}
+          {view === "rencana" && <>
+            <section><LoadingBar className="h-12 max-w-3xl rounded-2xl sm:h-16" tone="bg-moss/15" /><LoadingBar className="mt-4 h-5 w-80 rounded-full" /></section>
+            <section className="mt-10 rounded-[1.5rem] border border-ink/10 bg-white/80 p-5 sm:p-6"><div className="flex items-center justify-between gap-4"><LoadingBar className="h-7 w-44" /><LoadingBar className="h-9 w-24 rounded-xl" tone="bg-sage/70" /></div><div className="mt-6 grid grid-cols-7 gap-2"><LoadingBar className="h-5 rounded-full" tone="bg-moss/15" /><LoadingBar className="h-5 rounded-full" tone="bg-moss/15" /><LoadingBar className="h-5 rounded-full" tone="bg-moss/15" /><LoadingBar className="h-5 rounded-full" tone="bg-moss/15" /><LoadingBar className="h-5 rounded-full" tone="bg-moss/15" /><LoadingBar className="h-5 rounded-full" tone="bg-moss/15" /><LoadingBar className="h-5 rounded-full" tone="bg-moss/15" /></div><div className="mt-4 h-52 rounded-2xl bg-cream/70 soft-pulse" /></section>
+            <section className="mt-10 rounded-[1.5rem] border border-ink/10 bg-sand p-5 sm:p-6"><LoadingBar className="h-4 w-40 rounded-full" tone="bg-coral/25" /><LoadingBar className="mt-4 h-7 max-w-lg" /><LoadingBar className="mt-3 h-4 max-w-md rounded-full" /></section>
+          </>}
+          {view === "mata-kuliah" && <>
+            <section><LoadingBar className="h-12 max-w-3xl rounded-2xl sm:h-16" tone="bg-moss/15" /><LoadingBar className="mt-4 h-5 w-72 rounded-full" /></section>
+            <section className="mt-10 space-y-3">{["w-full", "w-11/12", "w-full", "w-10/12"].map((width, index) => <div key={`${width}-${index}`} className="rounded-[1.5rem] border border-ink/10 bg-white/70 p-5"><div className="flex items-center justify-between gap-4"><LoadingBar className={`h-6 ${width}`} tone="bg-moss/15" /><LoadingBar className="h-5 w-5 rounded-full" tone="bg-ink/10" /></div></div>)}</section>
+          </>}
+          {view === "progres" && <>
+            <section className="mx-auto max-w-5xl text-center"><LoadingBar className="mx-auto h-12 max-w-3xl rounded-2xl sm:h-16" tone="bg-moss/15" /><LoadingBar className="mx-auto mt-4 h-5 max-w-2xl rounded-full" /></section>
+            <section className="mt-10 grid gap-4 lg:grid-cols-12"><div className="rounded-[1.75rem] bg-moss p-6 lg:col-span-6"><LoadingBar className="h-4 w-40 rounded-full" tone="bg-cream/25" /><LoadingBar className="mt-8 h-14 w-32 rounded-2xl" tone="bg-cream/20" /><LoadingBar className="mt-4 h-4 max-w-sm rounded-full" tone="bg-cream/20" /></div><div className="rounded-[1.75rem] border border-ink/10 bg-white/80 p-6 lg:col-span-6"><LoadingBar className="h-4 w-40 rounded-full" tone="bg-coral/25" /><LoadingBar className="mt-8 h-12 w-48 rounded-2xl" /><LoadingBar className="mt-4 h-4 max-w-sm rounded-full" /></div>{["lg:col-span-4", "lg:col-span-4", "lg:col-span-4"].map((span, index) => <div key={`${span}-${index}`} className={`rounded-[1.5rem] border border-ink/10 bg-white/70 p-5 ${span}`}><LoadingBar className="h-4 w-28 rounded-full" tone="bg-moss/15" /><LoadingBar className="mt-4 h-10 w-20 rounded-2xl" /></div>)}</section>
+          </>}
+          {view === "profil" && <>
+            <section className="mx-auto max-w-5xl text-center"><LoadingBar className="mx-auto h-12 max-w-3xl rounded-2xl sm:h-16" tone="bg-moss/15" /><LoadingBar className="mx-auto mt-4 h-5 w-72 rounded-full" /></section>
+            <section className="mt-10 rounded-[1.75rem] border border-ink/10 bg-white/80 p-6 sm:p-8"><div className="flex items-start justify-between gap-4"><div><LoadingBar className="h-4 w-40 rounded-full" tone="bg-moss/20" /><LoadingBar className="mt-3 h-8 w-64" /></div><LoadingBar className="h-6 w-28 rounded-full" tone="bg-sage/70" /></div><div className="mt-8 grid gap-8 lg:grid-cols-2"><div><LoadingBar className="h-5 w-48" /><LoadingBar className="mt-4 h-11 w-full rounded-xl" /><LoadingBar className="mt-2 h-11 w-full rounded-xl" /></div><div><LoadingBar className="h-5 w-40" /><LoadingBar className="mt-4 h-14 w-full rounded-xl" /><LoadingBar className="mt-2 h-14 w-full rounded-xl" /></div></div><LoadingBar className="mt-8 h-12 w-48 rounded-xl" tone="bg-moss/20" /></section>
+          </>}
+          {view === "sesi" && <>
+            <LoadingBar className="h-4 w-40 rounded-full" tone="bg-moss/15" />
+            <section className="mt-8 grid gap-6 lg:grid-cols-[.42fr_1fr]"><div className="rounded-[1.75rem] bg-moss p-6"><LoadingBar className="h-4 w-48 rounded-full" tone="bg-cream/25" /><LoadingBar className="mt-8 h-16 w-28 rounded-2xl" tone="bg-cream/20" /><LoadingBar className="mt-3 h-4 w-24 rounded-full" tone="bg-cream/20" /></div><div className="rounded-[1.75rem] border border-ink/10 bg-white/80 p-6 sm:p-8"><LoadingBar className="h-4 w-32 rounded-full" tone="bg-coral/25" /><LoadingBar className="mt-4 h-12 max-w-xl rounded-2xl sm:h-16" /><LoadingBar className="mt-6 h-5 w-40 rounded-full" tone="bg-moss/15" /><LoadingBar className="mt-3 h-4 max-w-lg rounded-full" /><LoadingBar className="mt-8 h-12 w-full rounded-xl" tone="bg-moss/20" /></div></section>
+          </>}
+        </div>
+      </div>
+    </main>
+  );
+}
+
 export default function MainExperience({ view, sessionKey }: { view: MainView; sessionKey?: string }) {
   const [data, setData] = useState<MainData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -323,7 +386,7 @@ export default function MainExperience({ view, sessionKey }: { view: MainView; s
     });
     return () => { cancelled = true; };
   }, []);
-  if (loading || !data) return <main className="grid min-h-screen place-items-center bg-cream"><div className="text-center" role="status" aria-live="polite"><div className="mx-auto h-10 w-10 rounded-full border-4 border-moss border-t-transparent soft-pulse" aria-hidden="true" /><p className="mt-4 text-sm font-semibold text-ink/60">Memuat Hari Ini...</p></div></main>;
+  if (loading || !data) return <MainLoading view={view} />;
   const activeData = data;
   async function saveSession(sessionKeyValue: string, status: Exclude<StudySessionStatus, "planned">, feedback?: { reason?: string; understanding?: number }) {
     const current = activeData.setup.studyPlan?.sessions.find((session) => session.sessionKey === sessionKeyValue);
