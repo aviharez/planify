@@ -1,0 +1,282 @@
+"use client";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useGSAP } from "@gsap/react";
+import gsap from "gsap";
+import { ArrowRight, ChevronRight, Leaf, LogOut, RotateCcw } from "lucide-react";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
+import { dateInTimeZone } from "@/features/planning/priority";
+import type { OnboardingData, StudySession, StudySessionStatus } from "@/features/onboarding/types";
+import { updateStudySession } from "@/app/actions/study";
+import { canTransitionSession, shouldAskUnderstanding, transitionSession } from "@/features/study-session/state";
+import { loadMainData, saveLocalMainData, type MainData } from "./data";
+
+type MainView = "hari-ini" | "rencana" | "mata-kuliah" | "sesi";
+
+function formatDate(date: string, timeZone: string, options: Intl.DateTimeFormatOptions = { weekday: "long", day: "numeric", month: "long" }) {
+  return new Intl.DateTimeFormat("id-ID", { ...options, timeZone }).format(new Date(`${date}T12:00:00Z`));
+}
+
+function formatMinutes(minutes: number) {
+  return `${Math.floor(minutes / 60)} jam${minutes % 60 ? ` ${minutes % 60} menit` : ""}`;
+}
+
+function priorityLabel(score: number) {
+  return score >= 0.66 ? "Tinggi" : score >= 0.4 ? "Sedang" : "Terjaga";
+}
+
+function statusLabel(status: StudySessionStatus) {
+  return status === "completed" ? "Selesai" : status === "partial" ? "Selesai sebagian" : status === "missed" ? "Tidak sempat" : "Terjadwal";
+}
+
+function weekStart(date: string) {
+  const value = new Date(`${date}T12:00:00Z`);
+  const day = value.getUTCDay();
+  value.setUTCDate(value.getUTCDate() + (day === 0 ? -6 : 1 - day));
+  return value.toISOString().slice(0, 10);
+}
+
+function nextDate(date: string, offset: number) {
+  const value = new Date(`${date}T12:00:00Z`);
+  value.setUTCDate(value.getUTCDate() + offset);
+  return value.toISOString().slice(0, 10);
+}
+
+function MotionReveal({ children }: { children: React.ReactNode }) {
+  const root = useRef<HTMLDivElement>(null);
+  useGSAP(() => {
+    const elements = gsap.utils.toArray<HTMLElement>("[data-main-reveal]");
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      gsap.set(elements, { opacity: 1, y: 0 });
+      return;
+    }
+    gsap.fromTo(elements, { opacity: 0.2, y: 14 }, {
+      opacity: 1,
+      y: 0,
+      stagger: 0.08,
+      duration: 0.55,
+      ease: "power2.out",
+    });
+  }, { scope: root });
+  return <div ref={root}>{children}</div>;
+}
+
+function MainNavigation({ view }: { view: MainView }) {
+  return (
+    <nav aria-label="Navigasi utama" className="fixed inset-x-4 bottom-4 z-20 mx-auto flex max-w-md items-center justify-around rounded-2xl border border-ink/10 bg-cream/95 p-2 shadow-soft backdrop-blur sm:inset-x-auto sm:right-8 sm:left-auto sm:top-8 sm:bottom-auto sm:max-w-none sm:gap-1">
+      {[
+        ["hari-ini", "Hari Ini", "/hari-ini"],
+        ["rencana", "Rencana", "/rencana"],
+        ["mata-kuliah", "Mata Kuliah", "/mata-kuliah"],
+      ].map(([key, label, href]) => (
+        <a
+          key={key}
+          href={href}
+          className={`min-h-11 rounded-xl px-3 text-sm font-semibold transition sm:px-4 ${view === key ? "bg-moss text-cream" : "text-ink/60 hover:bg-sage/60 hover:text-ink"}`}
+          aria-current={view === key ? "page" : undefined}
+        >
+          {label}
+        </a>
+      ))}
+    </nav>
+  );
+}
+
+function SessionCard({ session, action = true }: { session: StudySession; action?: boolean }) {
+  return (
+    <article className="group rounded-[1.5rem] border border-ink/10 bg-white/80 p-5 transition hover:-translate-y-0.5 hover:border-moss/30 hover:shadow-soft" data-main-reveal>
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-coral">{session.startTime} · {session.duration} menit</p>
+          <h3 className="mt-2 truncate text-xl font-bold tracking-[-0.03em]">{session.courseName}</h3>
+        </div>
+        <span className="rounded-full bg-sage/60 px-3 py-1 text-xs font-semibold text-moss">{statusLabel(session.status)}</span>
+      </div>
+      {session.studyMethod && <p className="mt-4 text-sm font-semibold text-moss">{session.studyMethod}</p>}
+      {session.studyGoal && <p className="mt-1 text-sm leading-6 text-ink/65">{session.studyGoal}</p>}
+      {action && session.status !== "completed" && session.status !== "missed" && (
+        <a href={`/sesi/${encodeURIComponent(session.sessionKey)}`} className="mt-5 inline-flex min-h-11 items-center gap-2 rounded-xl bg-moss px-4 text-sm font-semibold text-cream hover:bg-ink">
+          Mulai Belajar <ArrowRight size={16} />
+        </a>
+      )}
+    </article>
+  );
+}
+
+function TodayView({ data, onLogout }: { data: MainData; onLogout: () => void }) {
+  const { setup } = data;
+  const plan = setup.studyPlan!;
+  const today = dateInTimeZone(new Date(), setup.timezone);
+  const todaySessions = plan.sessions.filter((session) => session.date === today).sort((a, b) => a.startTime.localeCompare(b.startTime));
+  const next = todaySessions.find((session) => session.status === "planned" || session.status === "partial");
+  const later = todaySessions.filter((session) => session !== next && session.status === "planned");
+  const completed = todaySessions.filter((session) => session.status === "completed").length;
+  const agenda = [...setup.academicEvents].filter((event) => event.date >= today).sort((a, b) => a.date.localeCompare(b.date))[0];
+  const hour = Number(new Intl.DateTimeFormat("en-US", { timeZone: setup.timezone, hour: "numeric", hour12: false }).format(new Date()));
+  const greeting = hour < 12 ? "Selamat pagi" : hour < 15 ? "Selamat siang" : hour < 18 ? "Selamat sore" : "Selamat malam";
+  return (
+    <PageFrame data={data} view="hari-ini" onLogout={onLogout}>
+      <MotionReveal>
+        <section className="grid gap-6 lg:grid-cols-[1.1fr_.9fr] lg:items-end" data-main-reveal>
+          <div>
+            <p className="text-sm font-semibold text-coral">{greeting}</p>
+            <h1 className="mt-3 max-w-6xl text-5xl font-bold leading-[0.95] tracking-[-0.07em] sm:text-7xl">Apa yang perlu kamu pelajari hari ini?</h1>
+            <p className="mt-5 text-base text-ink/60">{formatDate(today, setup.timezone)}</p>
+          </div>
+          <div className="rounded-[1.5rem] bg-moss p-5 text-cream" data-main-reveal>
+            <p className="text-sm text-cream/65">Progres hari ini</p>
+            <p className="mt-2 text-3xl font-bold">{completed} dari {todaySessions.length} sesi selesai</p>
+            <div className="mt-4 h-2 rounded-full bg-cream/20"><div className="h-full rounded-full bg-coral" style={{ width: `${todaySessions.length ? `${(completed / todaySessions.length) * 100}%` : "0%"}` }} /></div>
+          </div>
+        </section>
+        {next ? (
+          <section className="mt-10 grid gap-5 lg:grid-cols-[.42fr_1fr]" data-main-reveal>
+            <div className="rounded-[1.5rem] bg-coral p-5 text-white"><p className="text-sm text-white/75">Sesi berikutnya</p><p className="mt-3 text-5xl font-bold tracking-[-0.06em]">{next.startTime}</p><p className="mt-2 text-sm text-white/75">{next.duration} menit</p></div>
+            <SessionCard session={next} />
+          </section>
+        ) : (
+          <section className="mt-10 rounded-[1.5rem] border border-ink/10 bg-white/70 p-6" data-main-reveal>
+            <p className="text-lg font-bold">Hari ini lebih longgar.</p>
+            <p className="mt-2 text-sm leading-6 text-ink/65">Belum ada sesi terjadwal untuk hari ini. Rencana berikutnya tetap bisa kamu lihat di Rencana.</p>
+          </section>
+        )}
+        {later.length > 0 && <section className="mt-10"><h2 className="text-2xl font-bold tracking-[-0.04em]">Setelah ini</h2><div className="mt-4 grid gap-3 sm:grid-cols-2">{later.map((session) => <SessionCard key={session.sessionKey} session={session} />)}</div></section>}
+        <section className="mt-10 grid gap-4 sm:grid-cols-2">
+          <div className="rounded-[1.5rem] border border-ink/10 bg-sand p-5" data-main-reveal>
+            <p className="text-sm font-semibold text-moss">Agenda terdekat</p>
+            {agenda ? <><p className="mt-3 text-lg font-bold">{agenda.type} · {agenda.title}</p><p className="mt-2 text-sm text-ink/60">{formatDate(agenda.date, setup.timezone, { day: "numeric", month: "long" })}</p></> : <p className="mt-3 text-sm leading-6 text-ink/65">Belum ada agenda akademik yang perlu diperhatikan.</p>}
+          </div>
+          <div className="rounded-[1.5rem] border border-ink/10 bg-white/70 p-5" data-main-reveal>
+            <p className="text-sm font-semibold text-moss">Ritme belajarmu</p>
+            <p className="mt-3 text-lg font-bold">{setup.focusDuration} menit per sesi</p>
+            <p className="mt-2 text-sm leading-6 text-ink/65">Waktu fokus: {setup.focusPeriods.join(", ")}. Rencana menjaga ruang untuk kegiatan lain.</p>
+          </div>
+        </section>
+      </MotionReveal>
+    </PageFrame>
+  );
+}
+
+function PlanView({ data, onLogout }: { data: MainData; onLogout: () => void }) {
+  const { setup } = data;
+  const plan = setup.studyPlan!;
+  const today = dateInTimeZone(new Date(), setup.timezone);
+  const start = weekStart(today);
+  const days = Array.from({ length: 7 }, (_, index) => nextDate(start, index));
+  return (
+    <PageFrame data={data} view="rencana" onLogout={onLogout}>
+      <MotionReveal>
+        <header data-main-reveal><p className="text-sm font-semibold text-coral">Rencana belajar</p><h1 className="mt-3 max-w-6xl text-5xl font-bold leading-[0.95] tracking-[-0.07em]">Minggu ini, satu langkah demi satu.</h1><p className="mt-5 text-base text-ink/60">{formatDate(days[0], setup.timezone, { day: "numeric", month: "long" })} – {formatDate(days[6], setup.timezone, { day: "numeric", month: "long", year: "numeric" })}</p></header>
+        <div className="mt-10 space-y-3">
+          {days.map((date) => {
+            const sessions = plan.sessions.filter((session) => session.date === date);
+            return <section key={date} className="rounded-[1.5rem] border border-ink/10 bg-white/70 p-5" data-main-reveal><div className="flex items-center justify-between gap-4"><h2 className="text-lg font-bold">{formatDate(date, setup.timezone, { weekday: "long", day: "numeric", month: "long" })}</h2><span className="text-sm text-ink/50">{sessions.length} sesi</span></div>{sessions.length ? <div className="mt-4 space-y-2">{sessions.map((session) => <a key={session.sessionKey} href={`/sesi/${encodeURIComponent(session.sessionKey)}`} className="flex items-center justify-between gap-3 rounded-xl bg-cream p-3 transition hover:bg-sage/50"><span className="min-w-0"><span className="block text-sm font-semibold text-coral">{session.startTime} · {session.duration} menit</span><span className="mt-1 block truncate font-semibold">{session.courseName}</span></span><span className="text-ink/40"><ChevronRight size={18} /></span></a>)}</div> : <p className="mt-3 text-sm text-ink/50">Belum ada sesi pada hari ini.</p>}</section>;
+          })}
+        </div>
+        <p className="mt-6 text-sm leading-6 text-ink/55">Rencana ke depan tetap bisa berubah ketika kamu memberi kabar tentang ritmemu.</p>
+      </MotionReveal>
+    </PageFrame>
+  );
+}
+
+function CoursesView({ data, onLogout }: { data: MainData; onLogout: () => void }) {
+  const { setup } = data;
+  const plan = setup.studyPlan!;
+  const today = dateInTimeZone(new Date(), setup.timezone);
+  const endOfWeek = nextDate(weekStart(today), 6);
+  const factors = new Map(plan.prioritySnapshot.courseFactors.map((factor) => [factor.courseId, factor]));
+  return (
+    <PageFrame data={data} view="mata-kuliah" onLogout={onLogout}>
+      <MotionReveal>
+        <header data-main-reveal><p className="text-sm font-semibold text-coral">Mata kuliah</p><h1 className="mt-3 max-w-6xl text-5xl font-bold leading-[0.95] tracking-[-0.07em]">Lihat apa yang sedang kamu jaga.</h1><p className="mt-5 text-base text-ink/60">Prioritas dan ritme minggu ini tetap terlihat dekat dengan kondisi kamu.</p></header>
+        <div className="mt-10 space-y-3">
+          {setup.courses.map((course) => {
+            const factor = factors.get(course.id);
+            const sessions = plan.sessions.filter((session) => session.courseId === course.id && session.date >= weekStart(today) && session.date <= endOfWeek);
+            const event = setup.academicEvents.filter((item) => item.courseId === course.id && item.date >= today).sort((a, b) => a.date.localeCompare(b.date))[0];
+            const evaluation = setup.evaluations[course.id];
+            return <details key={course.id} className="accordion-panel group rounded-[1.5rem] border border-ink/10 bg-white/70 p-5" data-main-reveal><summary className="flex cursor-pointer list-none items-start justify-between gap-4"><span><span className="block text-sm font-semibold text-moss">{course.code} · Prioritas {priorityLabel(factor?.score ?? 0)}</span><span className="mt-2 block text-xl font-bold tracking-[-0.03em]">{course.name}</span></span><ChevronRight className="mt-1 shrink-0 transition group-open:rotate-90" size={20} /></summary><div className="mt-5 grid gap-3 border-t border-ink/10 pt-5 sm:grid-cols-3"><div><p className="text-xs font-semibold text-ink/50">Pemahaman</p><p className="mt-1 font-bold">{evaluation?.understanding ?? "—"} dari 5</p></div><div><p className="text-xs font-semibold text-ink/50">Kesulitan</p><p className="mt-1 font-bold">{evaluation?.difficulty ?? "—"} dari 5</p></div><div><p className="text-xs font-semibold text-ink/50">Minggu ini</p><p className="mt-1 font-bold">{sessions.length} sesi · {formatMinutes(sessions.reduce((sum, item) => sum + item.duration, 0))}</p></div></div>{event && <p className="mt-4 rounded-xl bg-sand p-3 text-sm"><span className="font-semibold">Agenda terdekat:</span> {event.type} · {event.title} · {formatDate(event.date, setup.timezone, { day: "numeric", month: "long" })}</p>}</details>;
+          })}
+        </div>
+      </MotionReveal>
+    </PageFrame>
+  );
+}
+
+function SessionView({ data, sessionKey, onSave }: { data: MainData; sessionKey: string; onSave: (sessionKey: string, status: Exclude<StudySessionStatus, "planned">, feedback?: { reason?: string; understanding?: number }) => Promise<{ ok: boolean; message: string }> }) {
+  const setup = data.setup;
+  const session = setup.studyPlan!.sessions.find((item) => item.sessionKey === sessionKey);
+  const [pendingStatus, setPendingStatus] = useState<Exclude<StudySessionStatus, "planned"> | null>(null);
+  const [reason, setReason] = useState<string>();
+  const [understanding, setUnderstanding] = useState<number>();
+  const [message, setMessage] = useState("");
+  const completedCount = setup.studyPlan!.sessions.filter((item) => item.status === "completed").length;
+  if (!session) return <PageFrame data={data} view="sesi" onLogout={() => undefined}><p className="rounded-2xl bg-white/70 p-6">Sesi tidak ditemukan.</p></PageFrame>;
+  const selectedSession = session;
+  const reasons = ["Tidak cukup waktu", "Terlalu lelah", "Materinya terasa sulit", "Lupa", "Ada kegiatan mendadak", "Lainnya"];
+  async function submit(status: Exclude<StudySessionStatus, "planned">, selectedReason?: string, selectedUnderstanding?: number) {
+    if ((status === "partial" || status === "missed") && !selectedReason) return;
+    setMessage("Menyimpan catatan sesi...");
+    const result = await onSave(selectedSession.sessionKey, status, { reason: selectedReason, understanding: selectedUnderstanding });
+    setMessage(result.message);
+    if (result.ok) setPendingStatus(null);
+  }
+  return (
+    <PageFrame data={data} view="sesi" onLogout={() => undefined} hideNavigation>
+      <MotionReveal>
+        <a href="/hari-ini" className="inline-flex items-center gap-2 text-sm font-semibold text-moss hover:text-coral"><RotateCcw size={15} /> Kembali ke Hari Ini</a>
+        <section className="mt-8 grid gap-6 lg:grid-cols-[.42fr_1fr]" data-main-reveal>
+          <div className="rounded-[1.75rem] bg-moss p-6 text-cream"><p className="text-sm text-cream/65">{formatDate(selectedSession.date, setup.timezone)} · {selectedSession.startTime}</p><p className="mt-8 text-6xl font-bold tracking-[-0.08em]">{selectedSession.duration}</p><p className="mt-1 text-sm text-cream/65">menit untuk satu sesi</p></div>
+          <div className="rounded-[1.75rem] border border-ink/10 bg-white/80 p-6 sm:p-8"><p className="text-sm font-semibold text-coral">Sesi belajar</p><h1 className="mt-3 text-4xl font-bold leading-[0.98] tracking-[-0.06em] sm:text-6xl">{selectedSession.courseName}</h1>{selectedSession.studyMethod && <p className="mt-6 text-lg font-semibold text-moss">{selectedSession.studyMethod}</p>}<p className="mt-3 text-base leading-7 text-ink/65">{selectedSession.studyGoal ?? "Tinjau kembali materi terbaru dan latih pemahamanmu."}</p>{selectedSession.explanation && <p className="mt-5 rounded-xl bg-sand p-4 text-sm leading-6">{selectedSession.explanation}</p>}{selectedSession.status !== "planned" && <p className="mt-5 rounded-xl bg-sage/50 p-4 text-sm font-semibold text-moss">Sesi ini: {statusLabel(selectedSession.status)}</p>}{selectedSession.status !== "completed" && selectedSession.status !== "missed" && !pendingStatus && <div className="mt-8 flex flex-col gap-3 sm:flex-row"><button type="button" onClick={() => shouldAskUnderstanding(completedCount) ? setPendingStatus("completed") : void submit("completed")} className="min-h-12 flex-1 rounded-xl bg-moss px-5 font-semibold text-cream hover:bg-ink">Selesai</button><button type="button" onClick={() => setPendingStatus("partial")} className="min-h-12 flex-1 rounded-xl border border-ink/15 px-5 font-semibold hover:bg-sage/50">Selesai Sebagian</button><button type="button" onClick={() => setPendingStatus("missed")} className="min-h-12 flex-1 rounded-xl border border-ink/15 px-5 font-semibold hover:bg-sage/50">Tidak Sempat</button></div>}{pendingStatus && <div className="mt-8 rounded-2xl bg-cream p-5"><p className="font-bold">{pendingStatus === "completed" ? "Seberapa paham kamu setelah sesi ini?" : "Apa yang membuat sesi ini tidak selesai?"}</p>{pendingStatus === "completed" ? <div className="mt-4 grid grid-cols-5 gap-2">{[1, 2, 3, 4, 5].map((value) => <button key={value} type="button" onClick={() => setUnderstanding(value)} className={`min-h-11 rounded-xl border text-sm font-bold ${understanding === value ? "border-moss bg-moss text-cream" : "border-ink/15 bg-white hover:bg-sage/50"}`}>{value}</button>)}</div> : <div className="mt-4 grid gap-2">{reasons.map((value) => <button key={value} type="button" onClick={() => setReason(value)} className={`min-h-11 rounded-xl border px-3 text-left text-sm ${reason === value ? "border-moss bg-moss text-cream" : "border-ink/15 bg-white hover:bg-sage/50"}`}>{value}</button>)}</div>}<button type="button" disabled={pendingStatus === "completed" ? understanding === undefined : !reason} onClick={() => void submit(pendingStatus, reason, understanding)} className="mt-5 min-h-12 w-full rounded-xl bg-moss px-5 font-semibold text-cream disabled:cursor-not-allowed disabled:opacity-40">Simpan Catatan</button></div>}{message && <p role="status" className="mt-4 text-sm text-ink/60">{message}</p>}</div>
+        </section>
+      </MotionReveal>
+    </PageFrame>
+  );
+}
+
+function PageFrame({ data, view, onLogout, hideNavigation = false, children }: { data: MainData; view: MainView; onLogout: () => void; hideNavigation?: boolean; children: React.ReactNode }) {
+  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
+  return <main className="min-h-screen overflow-x-hidden bg-cream px-4 pb-28 pt-5 text-ink sm:px-8 sm:pb-12 sm:pt-8"><div className="mx-auto max-w-6xl"><header className="flex items-center justify-between gap-4"><a href="/hari-ini" className="flex items-center gap-2 text-lg font-bold tracking-[-0.04em]"><span className="grid h-9 w-9 place-items-center rounded-xl bg-moss text-cream"><Leaf size={18} /></span>Planify</a><div className="flex items-center gap-3"><span className="hidden text-xs text-ink/50 sm:inline">{data.setup.timezone}</span>{supabase && <button type="button" onClick={onLogout} className="flex min-h-10 items-center gap-2 rounded-xl border border-ink/15 bg-white/70 px-3 text-sm font-semibold hover:bg-sage"><LogOut size={15} /> Keluar</button>}</div></header><div className="mt-10">{children}</div></div>{!hideNavigation && <MainNavigation view={view} />}</main>;
+}
+
+export default function MainExperience({ view, sessionKey }: { view: MainView; sessionKey?: string }) {
+  const [data, setData] = useState<MainData | null>(null);
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    void loadMainData().then((result) => {
+      if (cancelled) return;
+      if (!result) {
+        window.location.replace("/");
+        return;
+      }
+      setData(result);
+      setLoading(false);
+    }).catch(() => {
+      if (!cancelled) window.location.replace("/");
+    });
+    return () => { cancelled = true; };
+  }, []);
+  if (loading || !data) return <main className="grid min-h-screen place-items-center bg-cream"><div className="h-10 w-10 rounded-full border-4 border-moss border-t-transparent soft-pulse" aria-label="Memuat Hari Ini" /></main>;
+  const activeData = data;
+  async function saveSession(sessionKeyValue: string, status: Exclude<StudySessionStatus, "planned">, feedback?: { reason?: string; understanding?: number }) {
+    const current = activeData.setup.studyPlan?.sessions.find((session) => session.sessionKey === sessionKeyValue);
+    if (!current) return { ok: false, message: "Sesi tidak ditemukan." };
+    if (!canTransitionSession(current.status, status)) return { ok: false, message: "Sesi yang sudah tercatat tidak dapat diubah lagi." };
+    if (activeData.remotePlanId) {
+      const result = await updateStudySession({ planId: activeData.remotePlanId, sessionKey: sessionKeyValue, status, ...feedback });
+      if (!result.ok) return result;
+    }
+    const updated = transitionSession(current, status, feedback);
+    const setup: OnboardingData = { ...activeData.setup, studyPlan: { ...activeData.setup.studyPlan!, sessions: activeData.setup.studyPlan!.sessions.map((session) => session.sessionKey === sessionKeyValue ? updated : session) } };
+    saveLocalMainData(setup);
+    setData({ ...activeData, setup });
+    return { ok: true, message: "Perubahan sesi tersimpan." };
+  }
+  function logout() {
+    const supabase = createSupabaseBrowserClient();
+    void supabase?.auth.signOut().finally(() => window.location.replace("/"));
+  }
+  if (view === "sesi") return <SessionView data={data} sessionKey={sessionKey ? decodeURIComponent(sessionKey) : ""} onSave={saveSession} />;
+  return view === "rencana" ? <PlanView data={data} onLogout={logout} /> : view === "mata-kuliah" ? <CoursesView data={data} onLogout={logout} /> : <TodayView data={data} onLogout={logout} />;
+}

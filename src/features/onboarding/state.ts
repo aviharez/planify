@@ -223,6 +223,11 @@ export const onboardingDataSchema = z.object({
           explanation: z.string().optional(),
           completedAt: z.string().optional(),
           sourceSessionId: z.string().optional(),
+          feedback: z.object({
+            reason: z.string().optional(),
+            understanding: z.number().int().min(1).max(5).optional(),
+            recordedAt: z.string(),
+          }).optional(),
         }),
       ),
     })

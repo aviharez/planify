@@ -141,6 +141,12 @@ export type PlanningSnapshot = {
 
 export type StudySessionStatus = "planned" | "completed" | "partial" | "missed";
 
+export type SessionFeedback = {
+  reason?: string;
+  understanding?: number;
+  recordedAt: string;
+};
+
 export type StudySession = {
   id: string;
   sessionKey: string;
@@ -158,6 +164,7 @@ export type StudySession = {
   explanation?: string;
   completedAt?: string;
   sourceSessionId?: string;
+  feedback?: SessionFeedback;
 };
 
 export type StudyPlan = {
