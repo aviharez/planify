@@ -164,12 +164,22 @@ export type StudySession = {
   explanation?: string;
   completedAt?: string;
   sourceSessionId?: string;
+  changeReason?: string;
   feedback?: SessionFeedback;
 };
 
 export type StudyPlan = {
   id: string;
   remoteId?: string;
+  sourcePlanId?: string;
+  adaptationReason?: string;
+  changeSummary?: Array<{
+    sessionKey: string;
+    courseId: string;
+    courseName: string;
+    reason: string;
+    sourceSessionId?: string;
+  }>;
   generatedAt: string;
   planningPeriod: { start: string; end: string };
   weeklyCapacityMinutes: number;

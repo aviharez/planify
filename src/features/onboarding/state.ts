@@ -158,6 +158,15 @@ export const onboardingDataSchema = z.object({
     .object({
       id: z.string(),
       remoteId: z.string().optional(),
+      sourcePlanId: z.string().optional(),
+      adaptationReason: z.string().optional(),
+      changeSummary: z.array(z.object({
+        sessionKey: z.string(),
+        courseId: z.string(),
+        courseName: z.string(),
+        reason: z.string(),
+        sourceSessionId: z.string().optional(),
+      })).optional(),
       generatedAt: z.string(),
       planningPeriod: z.object({ start: z.string(), end: z.string() }),
       weeklyCapacityMinutes: z.number().int().nonnegative(),
@@ -223,6 +232,7 @@ export const onboardingDataSchema = z.object({
           explanation: z.string().optional(),
           completedAt: z.string().optional(),
           sourceSessionId: z.string().optional(),
+          changeReason: z.string().optional(),
           feedback: z.object({
             reason: z.string().optional(),
             understanding: z.number().int().min(1).max(5).optional(),

@@ -28,6 +28,8 @@ const remoteSessionSchema = z.object({
   study_goal: z.string().nullable(),
   explanation: z.string().nullable(),
   completed_at: z.string().nullable(),
+  source_session_id: z.string().nullable(),
+  change_reason: z.string().nullable(),
 });
 
 export type MainData = {
@@ -70,7 +72,7 @@ export async function loadMainData(): Promise<MainData | null> {
   if (!setup.planActive || !setup.studyPlan) return null;
   const { data: remotePlan } = await supabase
     .from("study_plans")
-    .select("id, planning_period_start, planning_period_end, weekly_capacity_minutes, capacity_policy, priority_snapshot, generated_at")
+    .select("id, planning_period_start, planning_period_end, weekly_capacity_minutes, capacity_policy, priority_snapshot, generated_at, source_plan_id, adaptation_reason, change_summary")
     .eq("user_id", authData.user.id)
     .eq("status", "active")
     .order("generated_at", { ascending: false })
@@ -79,7 +81,7 @@ export async function loadMainData(): Promise<MainData | null> {
   if (!remotePlan?.id) return { setup, authenticated: true };
   const { data: remoteSessions } = await supabase
     .from("study_sessions")
-    .select("id, session_key, course_key, course_code, course_name, session_date, start_time, end_time, duration_minutes, status, priority_snapshot, study_method, study_goal, explanation, completed_at")
+    .select("id, session_key, course_key, course_code, course_name, session_date, start_time, end_time, duration_minutes, status, priority_snapshot, study_method, study_goal, explanation, completed_at, source_session_id, change_reason")
     .eq("study_plan_id", remotePlan.id)
     .eq("user_id", authData.user.id)
     .order("session_date", { ascending: true })
@@ -103,6 +105,8 @@ export async function loadMainData(): Promise<MainData | null> {
     studyGoal: session.study_goal ?? undefined,
     explanation: session.explanation ?? undefined,
     completedAt: session.completed_at ?? undefined,
+    sourceSessionId: session.source_session_id ?? undefined,
+    changeReason: session.change_reason ?? undefined,
   }));
   const studyPlan: StudyPlan = {
     ...setup.studyPlan,
@@ -116,6 +120,9 @@ export async function loadMainData(): Promise<MainData | null> {
     weeklyCapacityMinutes: remotePlan.weekly_capacity_minutes,
     capacityPolicy: remotePlan.capacity_policy as StudyPlan["capacityPolicy"],
     prioritySnapshot: remotePlan.priority_snapshot as StudyPlan["prioritySnapshot"],
+    sourcePlanId: remotePlan.source_plan_id ?? undefined,
+    adaptationReason: remotePlan.adaptation_reason ?? undefined,
+    changeSummary: Array.isArray(remotePlan.change_summary) ? remotePlan.change_summary as StudyPlan["changeSummary"] : undefined,
     sessions,
   };
   return { setup: { ...setup, studyPlan }, authenticated: true, remotePlanId: remotePlan.id };

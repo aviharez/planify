@@ -8,6 +8,8 @@ import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { dateInTimeZone } from "@/features/planning/priority";
 import type { OnboardingData, StudySession, StudySessionStatus } from "@/features/onboarding/types";
 import { updateStudySession } from "@/app/actions/study";
+import { persistAdaptedPlan, saveWeeklyEvaluation } from "@/app/actions/adaptation";
+import { adaptStudyPlan, type WeeklyEvaluation } from "@/features/planning/adaptation";
 import { canTransitionSession, shouldAskUnderstanding, transitionSession } from "@/features/study-session/state";
 import { loadMainData, saveLocalMainData, type MainData } from "./data";
 
@@ -157,7 +159,53 @@ function TodayView({ data, onLogout }: { data: MainData; onLogout: () => void })
   );
 }
 
-function PlanView({ data, onLogout }: { data: MainData; onLogout: () => void }) {
+function WeeklyEvaluationForm({ data, onSubmit }: { data: MainData; onSubmit: (evaluation: WeeklyEvaluation) => Promise<{ ok: boolean; message: string }> }) {
+  const [perceivedLoad, setPerceivedLoad] = useState<number | null>(null);
+  const [realism, setRealism] = useState<WeeklyEvaluation["realism"]>("Sebagian Besar");
+  const [courseId, setCourseId] = useState("");
+  const [message, setMessage] = useState("");
+  const [saving, setSaving] = useState(false);
+  async function submit() {
+    if (perceivedLoad === null) {
+      setMessage("Pilih dulu seberapa berat ritmemu minggu ini.");
+      return;
+    }
+    setSaving(true);
+    const result = await onSubmit({ perceivedLoad, realism, ...(courseId ? { courseId } : {}) });
+    setMessage(result.message);
+    setSaving(false);
+  }
+  return (
+    <section className="mt-10 rounded-[1.5rem] border border-ink/10 bg-sand p-5 sm:p-6" data-main-reveal>
+      <p className="text-sm font-semibold text-coral">Evaluasi minggu ini</p>
+      <h2 className="mt-2 text-2xl font-bold tracking-[-0.04em]">Bagaimana rasanya menjalani rencana ini?</h2>
+      <p className="mt-2 text-sm leading-6 text-ink/60">Jawabanmu membantu memindahkan beban tanpa membuat minggu depan terasa penuh.</p>
+      <fieldset className="mt-5">
+        <legend className="text-sm font-semibold">Seberapa berat ritmemu?</legend>
+        <div className="mt-3 grid grid-cols-5 gap-2">
+          {[1, 2, 3, 4, 5].map((value) => <button key={value} type="button" aria-pressed={perceivedLoad === value} onClick={() => setPerceivedLoad(value)} className={`min-h-11 rounded-xl border text-sm font-bold ${perceivedLoad === value ? "border-moss bg-moss text-cream" : "border-ink/15 bg-white hover:bg-sage/50"}`}>{value}</button>)}
+        </div>
+        <div className="mt-2 flex justify-between text-xs text-ink/50"><span>Lebih ringan</span><span>Sangat berat</span></div>
+      </fieldset>
+      <fieldset className="mt-5">
+        <legend className="text-sm font-semibold">Apakah rencana ini terasa realistis?</legend>
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          {(["Ya", "Sebagian Besar", "Tidak"] as const).map((value) => <button key={value} type="button" aria-pressed={realism === value} onClick={() => setRealism(value)} className={`min-h-11 rounded-xl border px-3 text-sm font-semibold ${realism === value ? "border-moss bg-moss text-cream" : "border-ink/15 bg-white hover:bg-sage/50"}`}>{value}</button>)}
+        </div>
+      </fieldset>
+      <label className="mt-5 block text-sm font-semibold" htmlFor="weekly-course">Mata kuliah yang perlu lebih diperhatikan <span className="font-normal text-ink/50">(opsional)</span>
+        <select id="weekly-course" value={courseId} onChange={(event) => setCourseId(event.target.value)} className="mt-2 min-h-11 w-full rounded-xl border border-ink/15 bg-white px-3 text-sm font-normal">
+          <option value="">Belum memilih</option>
+          {data.setup.courses.map((course) => <option key={course.id} value={course.id}>{course.code} · {course.name}</option>)}
+        </select>
+      </label>
+      <button type="button" onClick={() => void submit()} disabled={saving} className="mt-5 min-h-12 rounded-xl bg-moss px-5 font-semibold text-cream hover:bg-ink disabled:cursor-not-allowed disabled:opacity-50">{saving ? "Memperbarui rencana..." : "Perbarui Rencana"}</button>
+      {message && <p className="mt-3 text-sm text-ink/65" role="status">{message}</p>}
+    </section>
+  );
+}
+
+function PlanView({ data, onLogout, onAdapt }: { data: MainData; onLogout: () => void; onAdapt: (evaluation: WeeklyEvaluation) => Promise<{ ok: boolean; message: string }> }) {
   const { setup } = data;
   const plan = setup.studyPlan!;
   const today = dateInTimeZone(new Date(), setup.timezone);
@@ -173,6 +221,8 @@ function PlanView({ data, onLogout }: { data: MainData; onLogout: () => void }) 
             return <section key={date} className="rounded-[1.5rem] border border-ink/10 bg-white/70 p-5" data-main-reveal><div className="flex items-center justify-between gap-4"><h2 className="text-lg font-bold">{formatDate(date, setup.timezone, { weekday: "long", day: "numeric", month: "long" })}</h2><span className="text-sm text-ink/50">{sessions.length} sesi</span></div>{sessions.length ? <div className="mt-4 space-y-2">{sessions.map((session) => <a key={session.sessionKey} href={`/sesi/${encodeURIComponent(session.sessionKey)}`} className="flex items-center justify-between gap-3 rounded-xl bg-cream p-3 transition hover:bg-sage/50"><span className="min-w-0"><span className="block text-sm font-semibold text-coral">{session.startTime} · {session.duration} menit</span><span className="mt-1 block truncate font-semibold">{session.courseName}</span></span><span className="text-ink/40"><ChevronRight size={18} /></span></a>)}</div> : <p className="mt-3 text-sm text-ink/50">Belum ada sesi pada hari ini.</p>}</section>;
           })}
         </div>
+        {plan.changeSummary && plan.changeSummary.length > 0 && <aside className="mt-10 rounded-[1.5rem] border border-coral/30 bg-coral/10 p-5" role="status" data-main-reveal><p className="text-sm font-semibold text-coral">Rencanamu Diperbarui</p><p className="mt-2 text-sm leading-6 text-ink/70">{plan.adaptationReason}</p><ul className="mt-4 space-y-2 text-sm leading-6 text-ink/75">{plan.changeSummary.map((change) => <li key={change.sessionKey} className="border-t border-coral/15 pt-2 first:border-0 first:pt-0"><span className="font-semibold">{change.courseName}</span> · {change.reason}</li>)}</ul></aside>}
+        <WeeklyEvaluationForm data={data} onSubmit={onAdapt} />
         <p className="mt-6 text-sm leading-6 text-ink/55">Rencana ke depan tetap bisa berubah ketika kamu memberi kabar tentang ritmemu.</p>
       </MotionReveal>
     </PageFrame>
@@ -273,10 +323,34 @@ export default function MainExperience({ view, sessionKey }: { view: MainView; s
     setData({ ...activeData, setup });
     return { ok: true, message: "Perubahan sesi tersimpan." };
   }
+  async function adaptPlan(evaluation: WeeklyEvaluation) {
+    const currentPlan = activeData.setup.studyPlan;
+    if (!currentPlan) return { ok: false, message: "Rencana belajar belum tersedia." };
+    const today = dateInTimeZone(new Date(), activeData.setup.timezone);
+    const result = adaptStudyPlan({ data: activeData.setup, plan: currentPlan, today, evaluation });
+    if (activeData.remotePlanId) {
+      const evaluationResult = await saveWeeklyEvaluation({ ...evaluation, weekStart: weekStart(today) });
+      if (!evaluationResult.ok) return evaluationResult;
+      const persisted = await persistAdaptedPlan({ sourcePlanId: activeData.remotePlanId, plan: result.plan });
+      if (!persisted.ok) return persisted;
+      result.plan.remoteId = persisted.remotePlanId;
+    }
+    const setup: OnboardingData = {
+      ...activeData.setup,
+      planningSnapshot: result.snapshot,
+      studyPlan: result.plan,
+    };
+    saveLocalMainData(setup);
+    setData({ ...activeData, setup, remotePlanId: result.plan.remoteId ?? activeData.remotePlanId });
+    return {
+      ok: true,
+      message: result.changes.length ? "Rencanamu diperbarui dengan beberapa penyesuaian." : "Evaluasi tersimpan. Rencana tetap sama karena belum ada perubahan yang aman.",
+    };
+  }
   function logout() {
     const supabase = createSupabaseBrowserClient();
     void supabase?.auth.signOut().finally(() => window.location.replace("/"));
   }
   if (view === "sesi") return <SessionView data={data} sessionKey={sessionKey ? decodeURIComponent(sessionKey) : ""} onSave={saveSession} />;
-  return view === "rencana" ? <PlanView data={data} onLogout={logout} /> : view === "mata-kuliah" ? <CoursesView data={data} onLogout={logout} /> : <TodayView data={data} onLogout={logout} />;
+  return view === "rencana" ? <PlanView data={data} onLogout={logout} onAdapt={adaptPlan} /> : view === "mata-kuliah" ? <CoursesView data={data} onLogout={logout} /> : <TodayView data={data} onLogout={logout} />;
 }

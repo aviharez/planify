@@ -140,7 +140,12 @@ function dateString(date: Date) {
 
 export function buildPlanningSnapshot(
   data: Pick<OnboardingData, "courses" | "evaluations" | "academicEvents" | "availability">,
-  options: { today: string | Date; reason?: "initial" | "adaptation"; policy?: PriorityPolicy },
+  options: {
+    today: string | Date;
+    reason?: "initial" | "adaptation";
+    policy?: PriorityPolicy;
+    adaptationByCourse?: Record<string, number>;
+  },
 ): PlanningSnapshot {
   const policy = options.policy ?? DEFAULT_PRIORITY_POLICY;
   const today = asDateString(options.today);
@@ -154,6 +159,7 @@ export function buildPlanningSnapshot(
           credits: course.credits,
           understanding: data.evaluations[course.id]?.understanding,
           difficulty: data.evaluations[course.id]?.difficulty,
+          adaptation: options.adaptationByCourse?.[course.id] ?? 0,
           events: data.academicEvents
             .filter((event) => event.courseId === course.id)
             .map((event) => ({ date: event.date, importance: event.importance, courseId: event.courseId })),
