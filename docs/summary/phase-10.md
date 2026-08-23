@@ -2,7 +2,9 @@
 
 ## Hasil
 
-Planify kini memiliki sinkronisasi satu arah yang dikelola aplikasi. `src/features/calendar/provider.ts` memetakan sesi belajar ke event Google bertimezone setup pengguna, memberi metadata private `planifyManaged`, lalu hanya `insert` untuk sesi masa depan tanpa link, `update` untuk link durable milik aplikasi, dan `delete` untuk link lama yang tidak lagi ada di rencana aktif. Event eksternal tidak pernah dicari atau disentuh.
+Planify kini memiliki sinkronisasi satu arah yang dikelola aplikasi. `src/features/calendar/provider.ts` memetakan sesi belajar ke event Google bertimezone setup pengguna, memberi metadata private `planifyManaged`, lalu hanya `insert` untuk sesi masa depan tanpa link, `update` setelah GET dan verifikasi metadata/session key pada link durable, dan `delete` setelah verifikasi yang sama. Link aktif yang korup dibuat ulang/repoint ke ID deterministik; event eksternal atau event Planify untuk sesi lain tidak pernah diubah atau dihapus.
+
+Batas masa depan menggunakan tanggal lokal dan waktu akhir sesi (`date > hari ini` atau `date === hari ini && endTime > HH:mm lokal`), sehingga sesi yang sudah berakhir pada hari yang sama tidak disentuh dan tautan historis tetap dipertahankan oleh sinkronisasi biasa. Disconnect memakai helper verifikasi yang sama: hanya event Planify mendatang dihapus, sementara link/koneksi lokal tetap dapat dilepas untuk event unmanaged atau hilang; cascade disconnect memang menghapus mapping lokal.
 
 `src/features/calendar/crypto.ts` memakai AES-256-GCM dengan IV acak dan authentication tag. Nilai yang disimpan hanya ciphertext berformat versi; kunci dibaca dari `CALENDAR_TOKEN_ENCRYPTION_KEY` server-side. `oauth.ts` membatasi scope ke `https://www.googleapis.com/auth/calendar.events`, menguji state/token exchange/refresh, dan mempertahankan refresh token lama ketika Google tidak mengirim token baru.
 
@@ -21,7 +23,7 @@ Migration `20260823083352_phase_10_calendar_sync.sql` membuat `calendar_connecti
 
 ## Verifikasi aplikasi
 
-- `npm test`: 41/41 lulus (crypto tamper, OAuth state/refresh, mapping, deterministic retry, create/update/delete/past-preservation/failure boundary).
+- `npm test`: 45/45 lulus (crypto tamper, OAuth state/refresh, mapping, deterministic retry, ownership verification/repoint, same-day future boundary, disconnect helper, create/update/delete/failure boundary).
 - `npm run typecheck`: lulus.
 - `npm run lint`: lulus.
 - `npm run build`: lulus dengan `/profil` dan route OAuth.

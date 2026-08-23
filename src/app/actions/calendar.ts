@@ -5,7 +5,7 @@ import { onboardingDataSchema } from "@/features/onboarding/state";
 import type { StudySessionStatus } from "@/features/onboarding/types";
 import { decryptCalendarToken, encryptCalendarToken } from "@/features/calendar/crypto";
 import { refreshGoogleAccessToken } from "@/features/calendar/oauth";
-import { CalendarProviderError, GoogleCalendarProvider, syncManagedEvents } from "@/features/calendar/provider";
+import { CalendarProviderError, GoogleCalendarProvider, removeManagedFutureEvent, syncManagedEvents, timeInTimeZone } from "@/features/calendar/provider";
 import { dateInTimeZone } from "@/features/planning/priority";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -60,8 +60,9 @@ export async function syncCalendar(): Promise<CalendarActionResult> {
   const { data: sessions } = await supabase.from("study_sessions").select("id, session_key, course_name, session_date, start_time, end_time, study_goal, status").eq("study_plan_id", plan.id).eq("user_id", user.id);
   const { data: links } = await supabase.from("calendar_event_links").select("study_session_id, session_key, google_event_id, google_calendar_id").eq("connection_id", connection.id).eq("user_id", user.id);
   const linkedSessionIds = (links ?? []).map((link) => link.study_session_id);
-  const { data: linkedSessions } = linkedSessionIds.length ? await supabase.from("study_sessions").select("id, session_date").in("id", linkedSessionIds).eq("user_id", user.id) : { data: [] as Array<{ id: string; session_date: string }> };
-  const sessionDates = new Map((linkedSessions ?? []).map((session) => [session.id, session.session_date]));
+  const { data: linkedSessions } = linkedSessionIds.length ? await supabase.from("study_sessions").select("id, session_key, session_date, end_time").in("id", linkedSessionIds).eq("user_id", user.id) : { data: [] as Array<{ id: string; session_key: string; session_date: string; end_time: string }> };
+  const sessionDetails = new Map((linkedSessions ?? []).map((session) => [session.id, session]));
+  const currentSessions = new Map((sessions ?? []).map((session) => [session.id, session]));
   let accessToken: string;
   let refreshedCiphertext: string | undefined;
   let refreshedExpiresIn = 3600;
@@ -77,19 +78,24 @@ export async function syncCalendar(): Promise<CalendarActionResult> {
       refreshedExpiresIn = refreshed.expires_in ?? 3600;
     }
     const provider = new GoogleCalendarProvider(accessToken);
+    const now = new Date();
     const result = await syncManagedEvents(provider, {
       sessions: (sessions ?? []).map((session) => ({ id: session.id, sessionKey: session.session_key, courseName: session.course_name, date: session.session_date, startTime: session.start_time.slice(0, 5), endTime: session.end_time.slice(0, 5), studyGoal: session.study_goal ?? undefined, status: session.status as StudySessionStatus })),
-      links: (links ?? []).map((link) => ({ studySessionId: link.study_session_id, sessionKey: link.session_key, googleEventId: link.google_event_id, googleCalendarId: link.google_calendar_id, sessionDate: sessionDates.get(link.study_session_id) })),
+      links: (links ?? []).map((link) => {
+        const session = currentSessions.get(link.study_session_id) ?? sessionDetails.get(link.study_session_id);
+        return { studySessionId: link.study_session_id, sessionKey: session?.session_key ?? "", googleEventId: link.google_event_id, googleCalendarId: link.google_calendar_id, sessionDate: session?.session_date, sessionEndTime: session?.end_time };
+      }),
       calendarId: connection.calendar_id,
       timeZone: setup.data.timezone,
-      today: dateInTimeZone(new Date(), setup.data.timezone),
+      today: dateInTimeZone(now, setup.data.timezone),
+      currentTime: timeInTimeZone(now, setup.data.timezone),
     });
     for (const created of result.inserts) {
       const inserted = await supabase.from("calendar_event_links").insert({ user_id: user.id, connection_id: connection.id, study_session_id: created.sessionId, google_calendar_id: connection.calendar_id, google_event_id: created.eventId, session_key: created.sessionKey, synced_at: new Date().toISOString(), updated_at: new Date().toISOString() });
       if (inserted.error) throw new Error("Tautan acara belum tersimpan.");
     }
     for (const updated of result.updates) {
-      const saved = await supabase.from("calendar_event_links").update({ google_event_id: updated.eventId, synced_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("connection_id", connection.id).eq("study_session_id", updated.sessionId).eq("user_id", user.id);
+      const saved = await supabase.from("calendar_event_links").update({ google_calendar_id: updated.calendarId, google_event_id: updated.eventId, synced_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("connection_id", connection.id).eq("study_session_id", updated.sessionId).eq("user_id", user.id);
       if (saved.error) throw new Error("Status tautan acara belum tersimpan.");
     }
     for (const removed of result.deletes) {
@@ -120,10 +126,10 @@ export async function disconnectCalendar(): Promise<CalendarActionResult> {
     const { data: semester } = await supabase.from("semesters").select("setup_payload").eq("user_id", user.id).eq("is_active", true).order("updated_at", { ascending: false }).limit(1).maybeSingle();
     const setup = onboardingDataSchema.safeParse(semester?.setup_payload);
     if (!setup.success) return { ok: false, message: "Preferensi timezone belum tersedia untuk melepas kalender." };
-    const { data: links } = await supabase.from("calendar_event_links").select("study_session_id, google_event_id, google_calendar_id").eq("connection_id", connection.id).eq("user_id", user.id);
+    const { data: links } = await supabase.from("calendar_event_links").select("study_session_id, session_key, google_event_id, google_calendar_id").eq("connection_id", connection.id).eq("user_id", user.id);
     const linkedIds = (links ?? []).map((link) => link.study_session_id);
-    const { data: linkedSessions } = linkedIds.length ? await supabase.from("study_sessions").select("id, session_date").in("id", linkedIds).eq("user_id", user.id) : { data: [] as Array<{ id: string; session_date: string }> };
-    const sessionDates = new Map((linkedSessions ?? []).map((session) => [session.id, session.session_date]));
+    const { data: linkedSessions } = linkedIds.length ? await supabase.from("study_sessions").select("id, session_key, session_date, end_time").in("id", linkedIds).eq("user_id", user.id) : { data: [] as Array<{ id: string; session_key: string; session_date: string; end_time: string }> };
+    const sessionDetails = new Map((linkedSessions ?? []).map((session) => [session.id, session]));
     let accessToken = decryptCalendarToken(connection.access_token_ciphertext);
     if (connection.access_token_expires_at && Date.parse(connection.access_token_expires_at) <= Date.now() + 60_000) {
       if (!connection.refresh_token_ciphertext) return { ok: false, message: "Sesi Google perlu disambungkan ulang sebelum kalender dilepas." };
@@ -131,14 +137,22 @@ export async function disconnectCalendar(): Promise<CalendarActionResult> {
       accessToken = refreshed.access_token;
     }
     const provider = new GoogleCalendarProvider(accessToken);
-    const today = dateInTimeZone(new Date(), setup.data.timezone);
+    const now = new Date();
+    const today = dateInTimeZone(now, setup.data.timezone);
+    const currentTime = timeInTimeZone(now, setup.data.timezone);
     for (const link of links ?? []) {
-      if (sessionDates.get(link.study_session_id) && sessionDates.get(link.study_session_id)! >= today) {
-        try {
-          await provider.delete(link.google_calendar_id, link.google_event_id);
-        } catch (error) {
-          if (!(error instanceof CalendarProviderError) || error.status !== 404) return { ok: false, message: "Acara mendatang belum berhasil dihapus dari Google Calendar. Coba lagi." };
-        }
+      const session = sessionDetails.get(link.study_session_id);
+      try {
+        const removal = await removeManagedFutureEvent(provider, {
+          googleCalendarId: link.google_calendar_id,
+          googleEventId: link.google_event_id,
+          sessionKey: session?.session_key ?? "",
+          sessionDate: session?.session_date,
+          sessionEndTime: session?.end_time,
+        }, { today, currentTime });
+        if (removal === "deleted") continue;
+      } catch (error) {
+        if (!(error instanceof CalendarProviderError) || error.status !== 404) return { ok: false, message: "Acara mendatang belum berhasil dihapus dari Google Calendar. Coba lagi." };
       }
     }
     const token = connection.refresh_token_ciphertext ? decryptCalendarToken(connection.refresh_token_ciphertext) : accessToken;

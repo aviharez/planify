@@ -9,12 +9,14 @@
 - Menambahkan Playwright config dan suite demo deterministik yang mengunggah fixture digital asli `download.pdf`, memeriksa hasil baca, memvalidasi resume setup yang belum selesai setelah reload, menyelesaikan enam langkah, membuka `/hari-ini`, memeriksa navigasi, dan memvalidasi active-plan landing setelah reload.
 - Memperbarui README dan `.env.example` untuk variabel deployment, callback Google yang tepat (`/api/auth/google/callback`), kunci enkripsi kalender, alur GitHub-to-Vercel, dan command E2E. Tidak ada deployment manual atau push.
 - Memperbarui Playwright ke 1.55.1 agar `npm audit --audit-level=high` bersih. Mode E2E memakai `NEXT_PUBLIC_PLANIFY_DEMO=1` sehingga tidak memerlukan kredensial eksternal.
+- Mempertahankan rencana aktif lokal saat Supabase terkonfigurasi tetapi pengguna sign-out; regression test memanggil jalur `loadMainData` terkonfigurasi dengan user kosong dan memvalidasi active plan tetap tersedia tanpa membuka data remote.
+- Regression test kalender dan fallback mencakup event unmanaged/malicious, event yang sudah selesai pada hari ini, helper disconnect, serta link aktif yang dipindahkan ke event deterministik.
 
 ## Verifikasi
 
 - `npm run lint` — lulus.
 - `npm run typecheck` — lulus.
-- `npm test` — 41/41 lulus.
+- `npm test` — 45/45 lulus.
 - `npm run build` — lulus dengan Next.js 16.3.2; route manifest, onboarding, authenticated pages, dan API berhasil dibuat.
 - `npx playwright install chromium` — lulus.
 - `npm run test:e2e` — 2/2 lulus.

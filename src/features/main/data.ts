@@ -49,12 +49,11 @@ function readLocal() {
   }
 }
 
-export async function loadMainData(): Promise<MainData | null> {
+export async function loadMainData(supabase = createSupabaseBrowserClient()): Promise<MainData | null> {
   const local = readLocal();
-  const supabase = createSupabaseBrowserClient();
   if (!supabase) return local ? { setup: local, authenticated: false } : null;
   const { data: authData } = await supabase.auth.getUser();
-  if (!authData.user) return null;
+  if (!authData.user) return local ? { setup: local, authenticated: false } : null;
   const { data: semester } = await supabase
     .from("semesters")
     .select("setup_payload")
