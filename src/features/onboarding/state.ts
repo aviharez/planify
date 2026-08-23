@@ -154,6 +154,79 @@ export const onboardingDataSchema = z.object({
       ),
     })
     .optional(),
+  studyPlan: z
+    .object({
+      id: z.string(),
+      remoteId: z.string().optional(),
+      generatedAt: z.string(),
+      planningPeriod: z.object({ start: z.string(), end: z.string() }),
+      weeklyCapacityMinutes: z.number().int().nonnegative(),
+      capacityPolicy: z.object({
+        capacityFactor: z.number().min(0).max(1),
+        densityFactor: z.number().min(0).max(1),
+        dailyMaximumMinutes: z.number().int().positive(),
+        maximumSessionDuration: z.number().int().positive(),
+        minimumBreakMinutes: z.number().int().nonnegative(),
+      }),
+      prioritySnapshot: z.object({
+        reason: z.enum(["initial", "adaptation"]),
+        generatedAt: z.string(),
+        planningPeriod: z.object({ start: z.string(), end: z.string() }),
+        weights: z.object({
+          academicLoad: z.number(),
+          knowledgeGap: z.number(),
+          difficulty: z.number(),
+          urgency: z.number(),
+          adaptation: z.number(),
+        }),
+        courseFactors: z.array(
+          z.object({
+            courseId: z.string(),
+            code: z.string(),
+            name: z.string(),
+            factors: z.object({
+              academicLoad: z.number(),
+              knowledgeGap: z.number(),
+              difficulty: z.number(),
+              urgency: z.number(),
+              adaptation: z.number(),
+            }),
+            score: z.number(),
+          }),
+        ),
+        availability: z.array(
+          z.object({ id: z.string(), day: z.string(), start: z.string(), end: z.string() }),
+        ),
+      }),
+      sessions: z.array(
+        z.object({
+          id: z.string(),
+          sessionKey: z.string(),
+          courseId: z.string(),
+          courseCode: z.string(),
+          courseName: z.string(),
+          date: z.string(),
+          startTime: z.string(),
+          endTime: z.string(),
+          duration: z.number().int().positive(),
+          status: z.enum(["planned", "completed", "partial", "missed"]),
+          prioritySnapshot: z.object({
+            academicLoad: z.number(),
+            knowledgeGap: z.number(),
+            difficulty: z.number(),
+            urgency: z.number(),
+            adaptation: z.number(),
+            score: z.number(),
+          }),
+          studyMethod: z.string().optional(),
+          studyGoal: z.string().optional(),
+          explanation: z.string().optional(),
+          completedAt: z.string().optional(),
+          sourceSessionId: z.string().optional(),
+        }),
+      ),
+    })
+    .optional(),
 });
 
 export function canAdvance(data: OnboardingData) {

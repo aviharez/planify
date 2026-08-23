@@ -42,6 +42,7 @@ import {
   type FocusPeriod,
   type OnboardingData,
   type Procrastination,
+  type StudyPlan,
   type TimeRange,
 } from "./types";
 import {
@@ -62,6 +63,7 @@ import {
   rankPriorities,
   calculatePriority,
 } from "@/features/planning/priority";
+import { generateStudyPlan } from "@/features/planning/scheduling";
 
 gsap.registerPlugin(ScrollTrigger);
 
@@ -564,6 +566,66 @@ async function storePlanningSnapshot(
     generated_at: snapshot.generatedAt,
   });
   return result.error ? "Snapshot prioritas belum tersimpan. Data onboarding tetap aman dan kamu bisa mencoba lagi." : "";
+}
+
+async function storeStudyPlan(
+  supabase: BrowserSupabase,
+  plan: StudyPlan,
+) {
+  if (!supabase) return { warning: "" };
+  const { data: authData } = await supabase.auth.getUser();
+  if (!authData.user) return { warning: "" };
+  const { data: semester } = await supabase
+    .from("semesters")
+    .select("id")
+    .eq("user_id", authData.user.id)
+    .eq("is_active", true)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!semester?.id)
+    return { warning: "Rencana tersimpan di perangkat, tetapi semester aktif belum tersedia untuk penyimpanan akun." };
+  const inserted = await supabase
+    .from("study_plans")
+    .insert({
+      user_id: authData.user.id,
+      semester_id: semester.id,
+      priority_snapshot: plan.prioritySnapshot,
+      capacity_policy: plan.capacityPolicy,
+      weekly_capacity_minutes: plan.weeklyCapacityMinutes,
+      planning_period_start: plan.planningPeriod.start,
+      planning_period_end: plan.planningPeriod.end,
+      generated_at: plan.generatedAt,
+    })
+    .select("id")
+    .single();
+  if (inserted.error || !inserted.data?.id)
+    return { warning: "Rencana tersusun, tetapi belum berhasil disimpan ke akun. Data lokal tetap aman." };
+  const sessions = plan.sessions.map((session) => ({
+    study_plan_id: inserted.data.id,
+    user_id: authData.user.id,
+    semester_id: semester.id,
+    course_key: session.courseId,
+    course_code: session.courseCode,
+    course_name: session.courseName,
+    session_key: session.sessionKey,
+    session_date: session.date,
+    start_time: session.startTime,
+    end_time: session.endTime,
+    duration_minutes: session.duration,
+    status: session.status,
+    priority_snapshot: session.prioritySnapshot,
+    study_method: session.studyMethod ?? null,
+    study_goal: session.studyGoal ?? null,
+    explanation: session.explanation ?? null,
+    completed_at: session.completedAt ?? null,
+  }));
+  if (sessions.length) {
+    const result = await supabase.from("study_sessions").insert(sessions);
+    if (result.error)
+      return { warning: "Rencana tersusun, tetapi sesi belum berhasil disimpan ke akun. Data lokal tetap aman." };
+  }
+  return { remoteId: inserted.data.id, warning: "" };
 }
 
 function KrsStep({
@@ -1818,9 +1880,8 @@ function SummaryStep({
                 Perlu perhatian lebih
               </p>
               <ol className="mt-4 space-y-2 text-lg font-semibold">
-                {attention.map((course, index) => (
+                {attention.map((course) => (
                   <li key={course.courseId}>
-                    <span className="mr-2 text-coral">0{index + 1}</span>
                     {course.name}
                   </li>
                 ))}
@@ -1868,11 +1929,11 @@ function SummaryStep({
       </div>
       <div className="mt-6 flex flex-col items-stretch justify-between gap-4 rounded-[1.5rem] bg-coral p-5 text-white sm:flex-row sm:items-center sm:p-6">
         <div>
-          <p className="text-xl font-bold tracking-[-0.03em]">
-            Siap menyiapkan prioritas belajar?
+            <p className="text-xl font-bold tracking-[-0.03em]">
+            Siap membuat rencana belajar?
           </p>
           <p className="mt-1 text-sm text-white/75">
-            Snapshot prioritas dihitung dari informasi yang baru saja kamu periksa.
+            Jadwal empat minggu akan disusun dari informasi yang baru saja kamu periksa.
           </p>
         </div>
         <button
@@ -1881,7 +1942,7 @@ function SummaryStep({
           className="flex min-h-12 shrink-0 items-center justify-center gap-2 rounded-xl bg-white px-5 font-bold text-ink transition hover:bg-cream"
         >
           <Sparkles size={17} />
-          Siapkan Prioritas
+          Buat Rencana Belajar
         </button>
       </div>
     </div>
@@ -1932,6 +1993,10 @@ function PlanReady({
     (sum, course) => sum + course.credits,
     0,
   );
+  const plan = data.studyPlan;
+  const upcoming = plan?.sessions.filter((session) => session.status === "planned") ?? [];
+  const totalMinutes = upcoming.reduce((sum, session) => sum + session.duration, 0);
+  const nextSession = upcoming[0];
   return (
     <div className="mx-auto max-w-3xl rounded-[2rem] border border-ink/15 bg-white/80 p-6 shadow-soft sm:p-10">
       <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-sage text-moss">
@@ -1945,8 +2010,7 @@ function PlanReady({
       </h1>
       <p className="mt-6 max-w-xl text-base leading-7 text-ink/65">
         Informasi {data.courses.length} mata kuliah dan {totalCredits} SKS sudah
-        dirangkum menjadi prioritas. Jadwal sesi akan dibuat pada fase
-        berikutnya.
+        dirangkum menjadi rencana belajar empat minggu yang bisa kamu jalani.
       </p>
       {warning && (
         <p role="status" className="mt-5 rounded-xl bg-sand p-3 text-sm leading-6 text-ink">
@@ -1956,23 +2020,33 @@ function PlanReady({
       <div className="mt-8 space-y-3 rounded-2xl bg-cream p-5">
         <p className="flex items-center gap-3 text-sm font-semibold">
           <Check size={17} className="text-moss" />
-          Prioritas mata kuliah dihitung
+          Prioritas mata kuliah dihitung dari kondisi kamu
         </p>
         <p className="flex items-center gap-3 text-sm font-semibold">
           {warning ? <CircleHelp size={17} className="text-coral" /> : <Check size={17} className="text-moss" />}
-          {warning ? "Snapshot perlu dicoba lagi" : "Snapshot perencanaan disimpan"}
+          {warning ? "Rencana lokal tetap tersedia" : "Rencana empat minggu tersimpan"}
         </p>
         <p className="flex items-center gap-3 text-sm font-semibold">
-          <CircleHelp size={17} className="text-coral" />
-          Jadwal sesi belum dibuat pada fase ini
+          <Check size={17} className="text-moss" />
+          {upcoming.length} sesi terjadwal · {Math.floor(totalMinutes / 60)} jam {totalMinutes % 60} menit
         </p>
       </div>
+      {nextSession && (
+        <div className="mt-5 rounded-2xl border border-coral/20 bg-coral/5 p-5">
+          <p className="text-sm font-semibold text-coral">Sesi berikutnya</p>
+          <p className="mt-2 text-lg font-bold">{nextSession.courseName}</p>
+          <p className="mt-1 text-sm text-ink/65">
+            {new Intl.DateTimeFormat("id-ID", { weekday: "long", day: "numeric", month: "long" }).format(new Date(`${nextSession.date}T00:00:00`))}
+            {" · "}{nextSession.startTime} · {nextSession.duration} menit
+          </p>
+        </div>
+      )}
       <div className="mt-8 flex flex-col gap-3 sm:flex-row">
         <a
           href="/hari-ini"
           className="flex min-h-13 flex-1 items-center justify-center gap-2 rounded-xl bg-moss px-5 py-3 font-semibold text-cream transition hover:bg-ink"
         >
-          Lihat Status Persiapan
+          Mulai dari Hari Ini
           <ArrowRight size={17} />
         </a>
         <button
@@ -2048,9 +2122,9 @@ export default function OnboardingApp() {
     async function hydrate() {
       if (!supabase) {
         if (localSetup) {
-          setData({ ...localSetup, timezone });
+          setData({ ...localSetup, timezone, planActive: Boolean(localSetup.planActive && localSetup.studyPlan) });
           setDemoStarted(true);
-          setGenerationReady(localSetup.planActive);
+          setGenerationReady(Boolean(localSetup.planActive && localSetup.studyPlan));
         } else {
           setData((current) => ({ ...current, timezone }));
         }
@@ -2092,11 +2166,11 @@ export default function OnboardingApp() {
       }
       if (!cancelled) {
         const nextData = remoteSetup
-          ? { ...remoteSetup, timezone }
+          ? { ...remoteSetup, timezone, planActive: Boolean(remoteSetup.planActive && remoteSetup.studyPlan) }
           : { ...initialOnboardingData, timezone };
         setData(nextData);
         setDemoStarted(true);
-        setGenerationReady(Boolean(remoteSetup?.planActive));
+        setGenerationReady(Boolean(remoteSetup?.planActive && remoteSetup.studyPlan));
         setAuthenticated(true);
         setRemoteReady(true);
         setHydrated(true);
@@ -2173,12 +2247,12 @@ export default function OnboardingApp() {
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     setData(
       remoteSetup
-        ? { ...remoteSetup, timezone }
+        ? { ...remoteSetup, timezone, planActive: Boolean(remoteSetup.planActive && remoteSetup.studyPlan) }
         : { ...initialOnboardingData, timezone },
     );
     setDemoStarted(true);
     setAuthenticated(true);
-    setGenerationReady(Boolean(remoteSetup?.planActive));
+    setGenerationReady(Boolean(remoteSetup?.planActive && remoteSetup.studyPlan));
     setRemoteReady(true);
   };
   const logout = async () => {
@@ -2203,22 +2277,47 @@ export default function OnboardingApp() {
   const generatePlan = async () => {
     setGenerationWarning("");
     setGenerationStatus("processing");
-    const snapshot = buildPlanningSnapshot(data, {
-      today: dateInTimeZone(new Date(), data.timezone),
+    const today = dateInTimeZone(new Date(), data.timezone);
+    const snapshot = buildPlanningSnapshot(data, { today });
+    const plan = generateStudyPlan({
+      courses: data.courses,
+      availability: data.availability,
+      classSchedules: data.classSchedules,
+      focusPeriods: data.focusPeriods,
+      focusDuration: data.focusDuration,
+      activityDensity: data.activityDensity,
+      procrastination: data.procrastination,
+      academicEvents: data.academicEvents,
+      snapshot,
+      today,
     });
-    setData((current) => ({ ...current, planActive: true, planningSnapshot: snapshot }));
+    setData((current) => ({
+      ...current,
+      planActive: true,
+      planningSnapshot: snapshot,
+      studyPlan: plan,
+    }));
     let warning = "";
     if (authenticated && supabase) {
       try {
-        warning = await storePlanningSnapshot(supabase, snapshot);
+        const snapshotWarning = await storePlanningSnapshot(supabase, snapshot);
+        const storedPlan = await storeStudyPlan(supabase, plan);
+        warning = snapshotWarning || storedPlan.warning;
+        if (storedPlan.remoteId)
+          setData((current) => ({
+            ...current,
+            studyPlan: current.studyPlan
+              ? { ...current.studyPlan, remoteId: storedPlan.remoteId }
+              : current.studyPlan,
+          }));
       } catch {
-        warning = "Snapshot prioritas belum tersimpan. Data onboarding tetap aman dan kamu bisa mencoba lagi.";
+        warning = "Rencana tersusun, tetapi belum berhasil disimpan ke akun. Data lokal tetap aman.";
       }
     }
     setGenerationWarning(
       warning ||
         (!authenticated
-          ? "Mode lokal: prioritas tersimpan di perangkat ini. Belum ada jadwal sesi yang dibuat."
+          ? "Mode lokal: rencana empat minggu tersimpan di perangkat ini."
           : ""),
     );
     setGenerationStatus("ready");
@@ -2254,7 +2353,7 @@ export default function OnboardingApp() {
         </div>
       </main>
     );
-  if (generationReady || data.planActive)
+  if (generationReady || Boolean(data.planActive && data.studyPlan))
     return (
       <main className="grain relative min-h-screen overflow-x-hidden px-5 py-8 sm:px-10 sm:py-12">
         <MotionLayer />

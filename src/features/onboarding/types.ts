@@ -105,6 +105,7 @@ export type OnboardingData = {
   krsStoragePath?: string;
   krsDocumentId?: string;
   planningSnapshot?: PlanningSnapshot;
+  studyPlan?: StudyPlan;
 };
 
 export type PriorityWeights = {
@@ -136,6 +137,44 @@ export type PlanningSnapshot = {
     score: number;
   }>;
   availability: TimeRange[];
+};
+
+export type StudySessionStatus = "planned" | "completed" | "partial" | "missed";
+
+export type StudySession = {
+  id: string;
+  sessionKey: string;
+  courseId: string;
+  courseCode: string;
+  courseName: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  duration: number;
+  status: StudySessionStatus;
+  prioritySnapshot: PriorityFactors & { score: number };
+  studyMethod?: string;
+  studyGoal?: string;
+  explanation?: string;
+  completedAt?: string;
+  sourceSessionId?: string;
+};
+
+export type StudyPlan = {
+  id: string;
+  remoteId?: string;
+  generatedAt: string;
+  planningPeriod: { start: string; end: string };
+  weeklyCapacityMinutes: number;
+  capacityPolicy: {
+    capacityFactor: number;
+    densityFactor: number;
+    dailyMaximumMinutes: number;
+    maximumSessionDuration: number;
+    minimumBreakMinutes: number;
+  };
+  prioritySnapshot: PlanningSnapshot;
+  sessions: StudySession[];
 };
 
 export const DAYS = [
