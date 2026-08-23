@@ -13,6 +13,7 @@ import { adaptStudyPlan, type WeeklyEvaluation } from "@/features/planning/adapt
 import { canTransitionSession, shouldAskUnderstanding, transitionSession } from "@/features/study-session/state";
 import { loadMainData, saveLocalMainData, type MainData } from "./data";
 import ProgressView from "@/features/progress/ProgressView";
+import ProfileView from "@/features/profile/ProfileView";
 
 type MainView = "hari-ini" | "rencana" | "mata-kuliah" | "progres" | "profil" | "sesi";
 
@@ -356,5 +357,6 @@ export default function MainExperience({ view, sessionKey }: { view: MainView; s
   }
   if (view === "sesi") return <SessionView data={data} sessionKey={sessionKey ? decodeURIComponent(sessionKey) : ""} onSave={saveSession} />;
   if (view === "progres") return <PageFrame data={data} view={view} onLogout={logout}><MotionReveal><ProgressView data={data} /></MotionReveal></PageFrame>;
+  if (view === "profil") return <PageFrame data={data} view={view} onLogout={logout}><MotionReveal><ProfileView data={data} /></MotionReveal></PageFrame>;
   return view === "rencana" ? <PlanView data={data} onLogout={logout} onAdapt={adaptPlan} /> : view === "mata-kuliah" ? <CoursesView data={data} onLogout={logout} /> : <TodayView data={data} onLogout={logout} />;
 }
