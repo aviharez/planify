@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { onboardingDataSchema } from "@/features/onboarding/state";
-import { weeklyEvaluationSchema } from "@/features/planning/adaptation";
+import { resolveSourceSessionId, weeklyEvaluationSchema } from "@/features/planning/adaptation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -145,7 +145,6 @@ export async function persistAdaptedPlan(input: unknown): Promise<ActionResult> 
     .select("id, session_key")
     .eq("study_plan_id", source.id)
     .eq("user_id", user.id);
-  const sourceIds = new Map((sourceSessions ?? []).map((session) => [session.session_key, session.id]));
   const inserted = await supabase
     .from("study_plans")
     .insert({
@@ -184,7 +183,7 @@ export async function persistAdaptedPlan(input: unknown): Promise<ActionResult> 
     study_goal: session.studyGoal ?? null,
     explanation: session.explanation ?? null,
     completed_at: session.completedAt ?? null,
-    source_session_id: sourceIds.get(session.sourceSessionId ?? session.sessionKey) ?? null,
+    source_session_id: resolveSourceSessionId(sourceSessions ?? [], session.sourceSessionId, session.sessionKey),
     change_reason: session.changeReason ?? null,
   }));
   const storedSessions = sessions.length ? await supabase.from("study_sessions").insert(sessions) : { error: null };

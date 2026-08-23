@@ -51,12 +51,17 @@ create policy "pengguna dapat mengelola evaluasi mingguan sendiri" on public.wee
 revoke all on table public.weekly_evaluations from anon;
 grant select, insert, update, delete on table public.weekly_evaluations to authenticated;
 
-create or replace function public.user_owns_study_plan(candidate_id uuid)
+create schema if not exists private;
+
+revoke all on schema private from public;
+grant usage on schema private to authenticated;
+
+create or replace function private.user_owns_study_plan(candidate_id uuid)
 returns boolean
 language sql
 stable
 security definer
-set search_path = public
+set search_path = ''
 as $$
   select exists (
     select 1
@@ -68,12 +73,12 @@ as $$
   );
 $$;
 
-create or replace function public.user_owns_study_session(candidate_id uuid)
+create or replace function private.user_owns_study_session(candidate_id uuid)
 returns boolean
 language sql
 stable
 security definer
-set search_path = public
+set search_path = ''
 as $$
   select exists (
     select 1
@@ -87,10 +92,12 @@ as $$
   );
 $$;
 
-revoke all on function public.user_owns_study_plan(uuid) from public;
-revoke all on function public.user_owns_study_session(uuid) from public;
-grant execute on function public.user_owns_study_plan(uuid) to authenticated;
-grant execute on function public.user_owns_study_session(uuid) to authenticated;
+revoke all on function private.user_owns_study_plan(uuid) from public;
+revoke all on function private.user_owns_study_session(uuid) from public;
+revoke all on function private.user_owns_study_plan(uuid) from anon;
+revoke all on function private.user_owns_study_session(uuid) from anon;
+grant execute on function private.user_owns_study_plan(uuid) to authenticated;
+grant execute on function private.user_owns_study_session(uuid) to authenticated;
 
 drop policy if exists "pengguna dapat mengelola rencana sendiri" on public.study_plans;
 create policy "pengguna dapat mengelola rencana sendiri" on public.study_plans
@@ -99,13 +106,13 @@ create policy "pengguna dapat mengelola rencana sendiri" on public.study_plans
     user_id = (select auth.uid()) and exists (
       select 1 from public.semesters s
       where s.id = semester_id and s.user_id = (select auth.uid())
-    ) and (source_plan_id is null or public.user_owns_study_plan(source_plan_id))
+    ) and (source_plan_id is null or (select private.user_owns_study_plan(source_plan_id)))
   )
   with check (
     user_id = (select auth.uid()) and exists (
       select 1 from public.semesters s
       where s.id = semester_id and s.user_id = (select auth.uid())
-    ) and (source_plan_id is null or public.user_owns_study_plan(source_plan_id))
+    ) and (source_plan_id is null or (select private.user_owns_study_plan(source_plan_id)))
   );
 
 drop policy if exists "pengguna dapat mengelola sesi sendiri" on public.study_sessions;
@@ -119,7 +126,7 @@ create policy "pengguna dapat mengelola sesi sendiri" on public.study_sessions
       where p.id = study_plan_id
         and p.user_id = (select auth.uid())
         and s.user_id = (select auth.uid())
-    ) and (source_session_id is null or public.user_owns_study_session(source_session_id))
+    ) and (source_session_id is null or (select private.user_owns_study_session(source_session_id)))
   )
   with check (
     user_id = (select auth.uid()) and exists (
@@ -129,5 +136,5 @@ create policy "pengguna dapat mengelola sesi sendiri" on public.study_sessions
       where p.id = study_plan_id
         and p.user_id = (select auth.uid())
         and s.user_id = (select auth.uid())
-    ) and (source_session_id is null or public.user_owns_study_session(source_session_id))
+    ) and (source_session_id is null or (select private.user_owns_study_session(source_session_id)))
   );

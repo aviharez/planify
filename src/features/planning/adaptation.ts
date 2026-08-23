@@ -28,6 +28,19 @@ export type AdaptationResult = {
   noSlotCourseIds: string[];
 };
 
+export function resolveSourceSessionId(
+  sourceSessions: Array<{ id: string; session_key: string }>,
+  sourceSessionId: string | undefined,
+  sessionKey: string,
+) {
+  const sourceIds = new Map<string, string>();
+  for (const session of sourceSessions) {
+    sourceIds.set(session.session_key, session.id);
+    sourceIds.set(session.id, session.id);
+  }
+  return sourceIds.get(sourceSessionId ?? sessionKey) ?? null;
+}
+
 type AdaptationInput = {
   data: Pick<
     OnboardingData,

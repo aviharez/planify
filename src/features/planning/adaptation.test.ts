@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildPlanningSnapshot } from "./priority";
-import { adaptStudyPlan, calculateAdaptationSignals, weeklyEvaluationSchema } from "./adaptation";
+import { adaptStudyPlan, calculateAdaptationSignals, resolveSourceSessionId, weeklyEvaluationSchema } from "./adaptation";
 import { generateStudyPlan } from "./scheduling";
 import type { OnboardingData } from "@/features/onboarding/types";
 
@@ -116,4 +116,10 @@ test("evaluasi mingguan menolak nilai di luar batas", () => {
   assert.equal(weeklyEvaluationSchema.safeParse({ perceivedLoad: 5, realism: "Ya" }).success, true);
   assert.equal(weeklyEvaluationSchema.safeParse({ perceivedLoad: 6, realism: "Ya" }).success, false);
   assert.equal(weeklyEvaluationSchema.safeParse({ perceivedLoad: 2, realism: "mungkin" }).success, false);
+});
+
+test("lineage UUID tetap terpetakan pada adaptasi berikutnya", () => {
+  const sourceSessions = [{ id: "row-uuid", session_key: "session-2026-08-24-1800-a" }];
+  assert.equal(resolveSourceSessionId(sourceSessions, "row-uuid", "new-key"), "row-uuid");
+  assert.equal(resolveSourceSessionId(sourceSessions, undefined, sourceSessions[0].session_key), "row-uuid");
 });
