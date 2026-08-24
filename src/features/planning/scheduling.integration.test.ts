@@ -14,7 +14,7 @@ test("download.pdf nyata memberi tujuh mata kuliah dan 21 SKS ke scheduler", asy
   }).extract(new File([pdf], "download.pdf", { type: "application/pdf" }));
   assert.equal(extraction.candidates.length, 7);
   assert.equal(extraction.totalCredits, 21);
-  const courses = extraction.candidates.map((course) => ({ ...course, id: course.code }));
+  const courses = extraction.candidates.map((course, index) => ({ ...course, id: `course-${index + 1}` }));
   const availability = [
     { id: "mon", day: "Senin", start: "18:00", end: "22:00" },
     { id: "tue", day: "Selasa", start: "18:00", end: "22:00" },

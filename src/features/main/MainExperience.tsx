@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
-import { ArrowRight, BarChart3, BookOpen, CalendarDays, ChevronRight, Leaf, ListChecks, LogOut, RotateCcw, UserRound } from "lucide-react";
+import { ArrowRight, BookOpen, CalendarDays, ChevronRight, Leaf, ListChecks, LogOut, RotateCcw, UserRound } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { dateInTimeZone } from "@/features/planning/priority";
 import type { OnboardingData, StudySession, StudySessionStatus } from "@/features/onboarding/types";
@@ -13,12 +13,11 @@ import { persistAdaptedPlan, saveWeeklyEvaluation } from "@/app/actions/adaptati
 import { adaptStudyPlan, type WeeklyEvaluation } from "@/features/planning/adaptation";
 import { canTransitionSession, shouldAskUnderstanding, transitionSession } from "@/features/study-session/state";
 import { loadMainData, saveLocalMainData, type MainData } from "./data";
-import ProgressView from "@/features/progress/ProgressView";
 import ProfileView from "@/features/profile/ProfileView";
 import CalendarView from "@/features/calendar/CalendarView";
 import { calendarRangeForPlan, combineCalendarEvents } from "@/features/calendar/transform";
 
-type MainView = "hari-ini" | "rencana" | "mata-kuliah" | "progres" | "profil" | "sesi";
+type MainView = "hari-ini" | "rencana" | "mata-kuliah" | "profil" | "sesi";
 
 function formatDate(date: string, timeZone: string, options: Intl.DateTimeFormatOptions = { weekday: "long", day: "numeric", month: "long" }) {
   return new Intl.DateTimeFormat("id-ID", { ...options, timeZone }).format(new Date(`${date}T12:00:00Z`));
@@ -72,7 +71,6 @@ const navigationItems = [
   { key: "hari-ini", label: "Hari Ini", mobileLabel: "Hari", href: "/hari-ini", icon: CalendarDays },
   { key: "rencana", label: "Rencana", mobileLabel: "Rencana", href: "/rencana", icon: ListChecks },
   { key: "mata-kuliah", label: "Mata Kuliah", mobileLabel: "Kuliah", href: "/mata-kuliah", icon: BookOpen },
-  { key: "progres", label: "Progres", mobileLabel: "Progres", href: "/progres", icon: BarChart3 },
   { key: "profil", label: "Profil", mobileLabel: "Profil", href: "/profil", icon: UserRound },
 ] as const;
 
@@ -212,7 +210,7 @@ function WeeklyEvaluationForm({ data, onSubmit }: { data: MainData; onSubmit: (e
       <label className="mt-5 block text-sm font-semibold" htmlFor="weekly-course">Mata kuliah yang perlu lebih diperhatikan <span className="font-normal text-ink/50">(opsional)</span>
         <select id="weekly-course" value={courseId} onChange={(event) => setCourseId(event.target.value)} className="mt-2 min-h-11 w-full rounded-xl border border-ink/15 bg-white px-3 text-sm font-normal">
           <option value="">Belum memilih</option>
-          {data.setup.courses.map((course) => <option key={course.id} value={course.id}>{course.code} · {course.name}</option>)}
+          {data.setup.courses.map((course) => <option key={course.id} value={course.id}>{course.name}</option>)}
         </select>
       </label>
       <button type="button" onClick={() => void submit()} disabled={saving} className="mt-5 min-h-12 rounded-xl bg-moss px-5 font-semibold text-cream hover:bg-ink disabled:cursor-not-allowed disabled:opacity-50">{saving ? "Memperbarui rencana..." : "Perbarui Rencana"}</button>
@@ -261,7 +259,7 @@ function CoursesView({ data, onLogout }: { data: MainData; onLogout: () => void 
             const sessions = plan.sessions.filter((session) => session.courseId === course.id && session.date >= weekStart(today) && session.date <= endOfWeek);
             const event = setup.academicEvents.filter((item) => item.courseId === course.id && item.date >= today).sort((a, b) => a.date.localeCompare(b.date))[0];
             const evaluation = setup.evaluations[course.id];
-            return <details key={course.id} className="accordion-panel group rounded-[1.5rem] border border-ink/10 bg-white/70 p-5" data-main-reveal><summary className="flex cursor-pointer list-none items-start justify-between gap-4"><span><span className="block text-sm font-semibold text-moss">{course.code} · Prioritas {priorityLabel(factor?.score ?? 0)}</span><span className="mt-2 block text-xl font-bold tracking-[-0.03em]">{course.name}</span></span><ChevronRight className="mt-1 shrink-0 transition group-open:rotate-90" size={20} /></summary><div className="mt-5 grid gap-3 border-t border-ink/10 pt-5 sm:grid-cols-3"><div><p className="text-xs font-semibold text-ink/50">Pemahaman</p><p className="mt-1 font-bold">{evaluation?.understanding ?? "—"} dari 5</p></div><div><p className="text-xs font-semibold text-ink/50">Kesulitan</p><p className="mt-1 font-bold">{evaluation?.difficulty ?? "—"} dari 5</p></div><div><p className="text-xs font-semibold text-ink/50">Minggu ini</p><p className="mt-1 font-bold">{sessions.length} sesi · {formatMinutes(sessions.reduce((sum, item) => sum + item.duration, 0))}</p></div></div>{event && <p className="mt-4 rounded-xl bg-sand p-3 text-sm"><span className="font-semibold">Agenda terdekat:</span> {event.type} · {event.title} · {formatDate(event.date, setup.timezone, { day: "numeric", month: "long" })}</p>}</details>;
+            return <details key={course.id} className="accordion-panel group rounded-[1.5rem] border border-ink/10 bg-white/70 p-5" data-main-reveal><summary className="flex cursor-pointer list-none items-start justify-between gap-4"><span><span className="block text-sm font-semibold text-moss">Prioritas {priorityLabel(factor?.score ?? 0)}</span><span className="mt-2 block text-xl font-bold tracking-[-0.03em]">{course.name}</span></span><ChevronRight className="mt-1 shrink-0 transition group-open:rotate-90" size={20} /></summary><div className="mt-5 grid gap-3 border-t border-ink/10 pt-5 sm:grid-cols-3"><div><p className="text-xs font-semibold text-ink/50">Pemahaman</p><p className="mt-1 font-bold">{evaluation?.understanding ?? "—"} dari 5</p></div><div><p className="text-xs font-semibold text-ink/50">Kesulitan</p><p className="mt-1 font-bold">{evaluation?.difficulty ?? "—"} dari 5</p></div><div><p className="text-xs font-semibold text-ink/50">Minggu ini</p><p className="mt-1 font-bold">{sessions.length} sesi · {formatMinutes(sessions.reduce((sum, item) => sum + item.duration, 0))}</p></div></div>{event && <p className="mt-4 rounded-xl bg-sand p-3 text-sm"><span className="font-semibold">Agenda terdekat:</span> {event.type} · {event.title} · {formatDate(event.date, setup.timezone, { day: "numeric", month: "long" })}</p>}</details>;
           })}
         </div>
       </MotionReveal>
@@ -302,14 +300,13 @@ function SessionView({ data, sessionKey, onSave, onLogout }: { data: MainData; s
 
 function PageFrame({ data, view, onLogout, hideNavigation = false, children }: { data: MainData; view: MainView; onLogout: () => void; hideNavigation?: boolean; children: React.ReactNode }) {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
-  return <main className="min-h-screen max-w-full overflow-x-hidden bg-cream px-4 pb-[calc(7rem+env(safe-area-inset-bottom))] pt-5 text-ink sm:px-8 sm:pt-8 lg:px-10 lg:pb-[calc(9rem+env(safe-area-inset-bottom))] lg:pt-5"><div className="mx-auto max-w-6xl"><header className="flex items-center justify-between gap-4 lg:border-b lg:border-ink/10 lg:pb-6"><a href="/hari-ini" className="flex items-center gap-2 text-lg font-bold tracking-[-0.04em] transition hover:text-moss"><span className="grid h-9 w-9 place-items-center rounded-xl bg-moss text-cream"><Leaf size={18} /></span>Planify</a><div className="flex items-center gap-3"><span className="hidden text-xs text-ink/50 sm:inline" title={data.setup.timezone}>{data.setup.timezone}</span>{supabase && <button type="button" onClick={onLogout} className="flex min-h-10 items-center gap-2 rounded-xl border border-ink/15 bg-white/70 px-3 text-sm font-semibold transition hover:bg-sage"><LogOut size={15} aria-hidden="true" /> Keluar</button>}</div></header>{!hideNavigation && <MainNavigation view={view} />}<div className="mt-10">{children}</div></div></main>;
+  return <main className="min-h-screen max-w-full overflow-x-hidden bg-cream px-4 pb-[calc(7rem+env(safe-area-inset-bottom))] pt-5 text-ink sm:px-8 sm:pt-8 lg:px-10 lg:pb-[calc(9rem+env(safe-area-inset-bottom))] lg:pt-5"><div className="mx-auto max-w-6xl"><header className="flex items-center justify-between gap-4 lg:border-b lg:border-ink/10 lg:pb-6"><a href="/hari-ini" className="flex items-center gap-2 text-lg font-bold tracking-[-0.04em] transition hover:text-moss"><span className="grid h-9 w-9 place-items-center rounded-xl bg-moss text-cream"><Leaf size={18} /></span>Planify</a><div className="flex items-center gap-3">{supabase && <button type="button" onClick={onLogout} className="flex min-h-10 items-center gap-2 rounded-xl border border-ink/15 bg-white/70 px-3 text-sm font-semibold transition hover:bg-sage"><LogOut size={15} aria-hidden="true" /> Keluar</button>}</div></header>{!hideNavigation && <MainNavigation view={view} />}<div className="mt-10">{children}</div></div></main>;
 }
 
 const loadingLabels: Record<MainView, string> = {
   "hari-ini": "Memuat Hari Ini...",
   rencana: "Memuat Rencana...",
   "mata-kuliah": "Memuat Mata Kuliah...",
-  progres: "Memuat Progres...",
   profil: "Memuat Profil...",
   sesi: "Memuat Sesi...",
 };
@@ -349,10 +346,6 @@ function MainLoading({ view }: { view: MainView }) {
           {view === "mata-kuliah" && <>
             <section><LoadingBar className="h-12 max-w-3xl rounded-2xl sm:h-16" tone="bg-moss/15" /><LoadingBar className="mt-4 h-5 w-72 rounded-full" /></section>
             <section className="mt-10 space-y-3">{["w-full", "w-11/12", "w-full", "w-10/12"].map((width, index) => <div key={`${width}-${index}`} className="rounded-[1.5rem] border border-ink/10 bg-white/70 p-5"><div className="flex items-center justify-between gap-4"><LoadingBar className={`h-6 ${width}`} tone="bg-moss/15" /><LoadingBar className="h-5 w-5 rounded-full" tone="bg-ink/10" /></div></div>)}</section>
-          </>}
-          {view === "progres" && <>
-            <section className="mx-auto max-w-5xl text-center"><LoadingBar className="mx-auto h-12 max-w-3xl rounded-2xl sm:h-16" tone="bg-moss/15" /><LoadingBar className="mx-auto mt-4 h-5 max-w-2xl rounded-full" /></section>
-            <section className="mt-10 grid gap-4 lg:grid-cols-12"><div className="rounded-[1.75rem] bg-moss p-6 lg:col-span-6"><LoadingBar className="h-4 w-40 rounded-full" tone="bg-cream/25" /><LoadingBar className="mt-8 h-14 w-32 rounded-2xl" tone="bg-cream/20" /><LoadingBar className="mt-4 h-4 max-w-sm rounded-full" tone="bg-cream/20" /></div><div className="rounded-[1.75rem] border border-ink/10 bg-white/80 p-6 lg:col-span-6"><LoadingBar className="h-4 w-40 rounded-full" tone="bg-coral/25" /><LoadingBar className="mt-8 h-12 w-48 rounded-2xl" /><LoadingBar className="mt-4 h-4 max-w-sm rounded-full" /></div>{["lg:col-span-4", "lg:col-span-4", "lg:col-span-4"].map((span, index) => <div key={`${span}-${index}`} className={`rounded-[1.5rem] border border-ink/10 bg-white/70 p-5 ${span}`}><LoadingBar className="h-4 w-28 rounded-full" tone="bg-moss/15" /><LoadingBar className="mt-4 h-10 w-20 rounded-2xl" /></div>)}</section>
           </>}
           {view === "profil" && <>
             <section className="mx-auto max-w-5xl text-center"><LoadingBar className="mx-auto h-12 max-w-3xl rounded-2xl sm:h-16" tone="bg-moss/15" /><LoadingBar className="mx-auto mt-4 h-5 w-72 rounded-full" /></section>
@@ -431,7 +424,6 @@ export default function MainExperience({ view, sessionKey }: { view: MainView; s
     void supabase?.auth.signOut().finally(() => window.location.replace("/"));
   }
   if (view === "sesi") return <SessionView data={data} sessionKey={sessionKey ? decodeURIComponent(sessionKey) : ""} onSave={saveSession} onLogout={logout} />;
-  if (view === "progres") return <PageFrame data={data} view={view} onLogout={logout}><MotionReveal><ProgressView data={data} /></MotionReveal></PageFrame>;
   if (view === "profil") return <PageFrame data={data} view={view} onLogout={logout}><MotionReveal><ProfileView data={data} onLogout={logout} /></MotionReveal></PageFrame>;
   return view === "rencana" ? <PlanView data={data} onLogout={logout} onAdapt={adaptPlan} /> : view === "mata-kuliah" ? <CoursesView data={data} onLogout={logout} /> : <TodayView data={data} onLogout={logout} />;
 }

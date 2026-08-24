@@ -41,19 +41,19 @@ test("urgensi mengikuti batas tanggal dan kepentingan", () => {
 
 test("tanggal prioritas mengikuti zona waktu pengguna", () => {
   const instant = new Date("2026-08-23T23:30:00.000Z");
-  assert.equal(dateInTimeZone(instant, "Asia/Jakarta"), "2026-08-24");
+  assert.equal(dateInTimeZone(instant, "Etc/GMT-7"), "2026-08-24");
   assert.equal(dateInTimeZone(instant, "America/Los_Angeles"), "2026-08-23");
 });
 
 test("pemeringkatan stabil dan snapshot menyimpan rincian yang dapat dijelaskan", () => {
   const ranked = rankPriorities([
-    calculatePriority({ courseId: "b", code: "IF-002", credits: 3 }, { today: "2026-08-23" }),
-    calculatePriority({ courseId: "a", code: "IF-001", credits: 3 }, { today: "2026-08-23" }),
+    calculatePriority({ courseId: "b", name: "Basis Data", credits: 3 }, { today: "2026-08-23" }),
+    calculatePriority({ courseId: "a", name: "Algoritma", credits: 3 }, { today: "2026-08-23" }),
   ]);
-  assert.deepEqual(ranked.map((item) => item.code), ["IF-001", "IF-002"]);
+  assert.deepEqual(ranked.map((item) => item.courseId), ["a", "b"]);
   const snapshot = buildPlanningSnapshot(
     {
-      courses: [{ id: "a", code: "IF-001", name: "Algoritma", credits: 3, semester: 3 }],
+      courses: [{ id: "a", name: "Algoritma", credits: 3 }],
       evaluations: { a: { understanding: 2, difficulty: 4 } },
       academicEvents: [],
       availability: [],

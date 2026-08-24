@@ -15,7 +15,6 @@ export default defineConfig({
     env: {
       NEXT_PUBLIC_SUPABASE_URL: "",
       NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "",
-      NEXT_PUBLIC_PLANIFY_DEMO: "1",
     },
     url: "http://127.0.0.1:3100",
     reuseExistingServer: !process.env.CI,

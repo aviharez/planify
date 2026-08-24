@@ -7,7 +7,6 @@ const session: StudySession = {
   id: "one",
   sessionKey: "one",
   courseId: "a",
-  courseCode: "IF-001",
   courseName: "Algoritma",
   date: "2026-08-24",
   startTime: "19:00",

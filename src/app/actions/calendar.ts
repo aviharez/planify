@@ -128,7 +128,7 @@ export async function disconnectCalendar(): Promise<CalendarActionResult> {
   try {
     const { data: semester } = await supabase.from("semesters").select("setup_payload").eq("user_id", user.id).eq("is_active", true).order("updated_at", { ascending: false }).limit(1).maybeSingle();
     const setup = onboardingDataSchema.safeParse(semester?.setup_payload);
-    if (!setup.success) return { ok: false, message: "Preferensi timezone belum tersedia untuk melepas kalender." };
+    if (!setup.success) return { ok: false, message: "Pengaturan waktu kalender belum tersedia untuk melepas kalender." };
     const { data: links } = await supabase.from("calendar_event_links").select("study_session_id, session_key, google_event_id, google_calendar_id").eq("connection_id", connection.id).eq("user_id", user.id);
     const linkedIds = (links ?? []).map((link) => link.study_session_id);
     const { data: linkedSessions } = linkedIds.length ? await supabase.from("study_sessions").select("id, session_key, session_date, end_time").in("id", linkedIds).eq("user_id", user.id) : { data: [] as Array<{ id: string; session_key: string; session_date: string; end_time: string }> };

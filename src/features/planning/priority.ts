@@ -28,7 +28,6 @@ export type PriorityEvent = {
 
 export type PriorityCourseInput = {
   courseId?: string;
-  code?: string;
   name?: string;
   credits: number;
   understanding?: number;
@@ -39,7 +38,6 @@ export type PriorityCourseInput = {
 
 export type PriorityResult = {
   courseId?: string;
-  code?: string;
   name?: string;
   factors: PriorityFactors;
   finalScore: number;
@@ -118,7 +116,7 @@ export function calculatePriority(
     factors.difficulty * policy.difficulty +
     factors.urgency * policy.urgency +
     factors.adaptation * policy.adaptation;
-  return { courseId: input.courseId, code: input.code, name: input.name, factors, finalScore };
+  return { courseId: input.courseId, name: input.name, factors, finalScore };
 }
 
 export function rankPriorities(results: PriorityResult[]) {
@@ -127,8 +125,8 @@ export function rankPriorities(results: PriorityResult[]) {
     .sort((a, b) => {
       const difference = b.result.finalScore - a.result.finalScore;
       if (Math.abs(difference) > 1e-9) return difference;
-      const aKey = `${a.result.code ?? ""}|${a.result.name ?? ""}|${a.result.courseId ?? ""}`;
-      const bKey = `${b.result.code ?? ""}|${b.result.name ?? ""}|${b.result.courseId ?? ""}`;
+      const aKey = `${a.result.name ?? ""}|${a.result.courseId ?? ""}`;
+      const bKey = `${b.result.name ?? ""}|${b.result.courseId ?? ""}`;
       return (aKey < bKey ? -1 : aKey > bKey ? 1 : 0) || a.index - b.index;
     })
     .map(({ result }) => result);
@@ -154,7 +152,6 @@ export function buildPlanningSnapshot(
       const result = calculatePriority(
         {
           courseId: course.id,
-          code: course.code,
           name: course.name,
           credits: course.credits,
           understanding: data.evaluations[course.id]?.understanding,
@@ -170,7 +167,6 @@ export function buildPlanningSnapshot(
     }),
   ).map((result) => ({
     courseId: result.courseId ?? "",
-    code: result.code ?? "",
     name: result.name ?? "",
     factors: result.factors,
     score: result.finalScore,

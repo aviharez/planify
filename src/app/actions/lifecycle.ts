@@ -58,8 +58,12 @@ export async function startNewSemester(reusePreferences = true) {
   const now = new Date();
   const name = nextSemesterName(active?.name, (semesters ?? []).map((semester) => semester.name), now.getFullYear());
   const fresh: OnboardingData = createNewSemesterSetup(previous, reusePreferences, name);
-  const created = await supabase.rpc("start_new_semester", { p_name: name, p_setup_payload: fresh });
-  if (created.error || !created.data) return { ok: false as const, message: "Semester baru belum berhasil dibuat." };
+  try {
+    const created = await supabase.rpc("start_new_semester", { p_name: name, p_setup_payload: fresh });
+    if (created.error || !created.data) return { ok: false as const, message: "Semester baru belum berhasil dibuat." };
+  } catch {
+    return { ok: false as const, message: "Semester baru belum berhasil dibuat." };
+  }
   revalidatePath("/");
   revalidatePath("/profil");
   return { ok: true as const, setup: fresh };

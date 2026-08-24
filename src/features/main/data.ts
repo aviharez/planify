@@ -10,7 +10,6 @@ const remoteSessionSchema = z.object({
   id: z.string(),
   session_key: z.string(),
   course_key: z.string(),
-  course_code: z.string(),
   course_name: z.string(),
   session_date: z.string(),
   start_time: z.string(),
@@ -39,22 +38,10 @@ export type MainData = {
   remotePlanId?: string;
 };
 
-function readLocal() {
-  try {
-    const setup = onboardingDataSchema.parse(
-      JSON.parse(window.localStorage.getItem(ONBOARDING_STORAGE_KEY) ?? "null"),
-    ) as OnboardingData;
-    return setup.planActive && setup.studyPlan && canOpenMainExperience(setup) ? setup : null;
-  } catch {
-    return null;
-  }
-}
-
 export async function loadMainData(supabase = createSupabaseBrowserClient()): Promise<MainData | null> {
-  const local = readLocal();
-  if (!supabase) return local ? { setup: local, authenticated: false } : null;
+  if (!supabase) return null;
   const { data: authData } = await supabase.auth.getUser();
-  if (!authData.user) return local ? { setup: local, authenticated: false } : null;
+  if (!authData.user) return null;
   const { data: semester } = await supabase
     .from("semesters")
     .select("id, setup_payload")
@@ -85,7 +72,7 @@ export async function loadMainData(supabase = createSupabaseBrowserClient()): Pr
   if (!remotePlan?.id) return { setup: hydratedSetup, authenticated: true };
   const { data: remoteSessions } = await supabase
     .from("study_sessions")
-    .select("id, session_key, course_key, course_code, course_name, session_date, start_time, end_time, duration_minutes, status, priority_snapshot, study_method, study_goal, explanation, completed_at, source_session_id, change_reason")
+    .select("id, session_key, course_key, course_name, session_date, start_time, end_time, duration_minutes, status, priority_snapshot, study_method, study_goal, explanation, completed_at, source_session_id, change_reason")
     .eq("study_plan_id", remotePlan.id)
     .eq("user_id", authData.user.id)
     .order("session_date", { ascending: true })
@@ -112,7 +99,6 @@ export async function loadMainData(supabase = createSupabaseBrowserClient()): Pr
     id: session.session_key,
     sessionKey: session.session_key,
     courseId: session.course_key,
-    courseCode: session.course_code,
     courseName: session.course_name,
     date: session.session_date,
     startTime: session.start_time.slice(0, 5),

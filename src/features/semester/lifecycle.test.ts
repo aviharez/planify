@@ -4,7 +4,7 @@ import { initialOnboardingData, type OnboardingData } from "@/features/onboardin
 import { createNewSemesterSetup, nextSemesterName } from "./lifecycle";
 
 test("semester baru hanya memakai preferensi umum", () => {
-  const previous: OnboardingData = { ...initialOnboardingData, timezone: "Asia/Singapore", focusPeriods: ["Pagi", "Malam"], focusDuration: 90, activityDensity: "Padat", procrastination: "Sering", courses: [{ id: "c", code: "IF", name: "Basis Data", credits: 3, semester: 3 }], classSchedules: { c: [{ id: "class", day: "Senin", start: "09:00", end: "10:00" }] }, evaluations: { c: { understanding: 2, difficulty: 5 } }, academicEvents: [{ id: "event", courseId: "c", type: "UTS", title: "UTS", date: "2026-09-01", importance: 5, notes: "" }], availability: [{ id: "a", day: "Senin", start: "19:00", end: "21:00" }], planningSnapshot: { reason: "initial", generatedAt: "2026-08-23T00:00:00.000Z", planningPeriod: { start: "2026-08-24", end: "2026-09-20" }, weights: { academicLoad: 0.2, knowledgeGap: 0.2, difficulty: 0.2, urgency: 0.2, adaptation: 0.2 }, courseFactors: [], availability: [] }, studyPlan: {} as NonNullable<OnboardingData["studyPlan"]>, planActive: true };
+  const previous: OnboardingData = { ...initialOnboardingData, timezone: "Asia/Singapore", focusPeriods: ["Pagi", "Malam"], focusDuration: 90, activityDensity: "Padat", procrastination: "Sering", courses: [{ id: "c", name: "Basis Data", credits: 3 }], classSchedules: { c: [{ id: "class", day: "Senin", start: "09:00", end: "10:00" }] }, evaluations: { c: { understanding: 2, difficulty: 5 } }, academicEvents: [{ id: "event", courseId: "c", type: "UTS", title: "UTS", date: "2026-09-01", importance: 5, notes: "" }], availability: [{ id: "a", day: "Senin", start: "19:00", end: "21:00" }], planningSnapshot: { reason: "initial", generatedAt: "2026-08-23T00:00:00.000Z", planningPeriod: { start: "2026-08-24", end: "2026-09-20" }, weights: { academicLoad: 0.2, knowledgeGap: 0.2, difficulty: 0.2, urgency: 0.2, adaptation: 0.2 }, courseFactors: [], availability: [] }, studyPlan: {} as NonNullable<OnboardingData["studyPlan"]>, planActive: true };
   const next = createNewSemesterSetup(previous, true, "Genap 2026/2027");
   assert.equal(next.semester, "Genap 2026/2027");
   assert.equal(next.timezone, previous.timezone);
@@ -20,6 +20,15 @@ test("semester baru hanya memakai preferensi umum", () => {
   assert.equal(next.planningSnapshot, undefined);
   assert.equal(next.studyPlan, undefined);
   assert.equal(next.planActive, false);
+});
+
+test("semester baru tanpa reuse mengembalikan preferensi ke default", () => {
+  const previous: OnboardingData = { ...initialOnboardingData, focusPeriods: ["Pagi"], focusDuration: 90, activityDensity: "Padat", procrastination: "Sering" };
+  const next = createNewSemesterSetup(previous, false, "Ganjil 2027/2028");
+  assert.deepEqual(next.focusPeriods, initialOnboardingData.focusPeriods);
+  assert.equal(next.focusDuration, initialOnboardingData.focusDuration);
+  assert.equal(next.activityDensity, initialOnboardingData.activityDensity);
+  assert.equal(next.procrastination, initialOnboardingData.procrastination);
 });
 
 test("nama semester berikutnya mengikuti kalender akademik dan menghindari duplikasi", () => {

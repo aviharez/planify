@@ -99,9 +99,7 @@ function minutes(value: string) {
 }
 
 function timeString(value: number) {
-  const hours = Math.floor(value / 60).toString().padStart(2, "0");
-  const remainder = (value % 60).toString().padStart(2, "0");
-  return `${hours}:${remainder}`;
+  return `${Math.floor(value / 60).toString().padStart(2, "0")}:${(value % 60).toString().padStart(2, "0")}`;
 }
 
 function overlaps(startA: number, endA: number, startB: number, endB: number) {
@@ -137,10 +135,7 @@ function resolvePolicy(policy: Partial<SchedulingPolicy> = {}): SchedulingPolicy
     ...DEFAULT_SCHEDULING_POLICY,
     ...policy,
     densityFactors: { ...DEFAULT_SCHEDULING_POLICY.densityFactors, ...policy.densityFactors },
-    procrastinationFactors: {
-      ...DEFAULT_SCHEDULING_POLICY.procrastinationFactors,
-      ...policy.procrastinationFactors,
-    },
+    procrastinationFactors: { ...DEFAULT_SCHEDULING_POLICY.procrastinationFactors, ...policy.procrastinationFactors },
   };
 }
 
@@ -157,16 +152,8 @@ export function calculateWeeklyCapacity(
   );
   const densityFactor = clamp(resolved.densityFactors[activityDensity] ?? 0.6);
   const procrastinationFactor = clamp(resolved.procrastinationFactors[procrastination] ?? 0.9);
-  const weeklyCapacityMinutes = Math.floor(
-    availableMinutes * densityFactor * procrastinationFactor * resolved.capacityFactor,
-  );
-  return {
-    availableMinutes,
-    densityFactor,
-    procrastinationFactor,
-    capacityFactor: resolved.capacityFactor,
-    weeklyCapacityMinutes,
-  };
+  const weeklyCapacityMinutes = Math.floor(availableMinutes * densityFactor * procrastinationFactor * resolved.capacityFactor);
+  return { availableMinutes, densityFactor, procrastinationFactor, capacityFactor: resolved.capacityFactor, weeklyCapacityMinutes };
 }
 
 function periodAt(startTime: string): FocusPeriod {
@@ -178,10 +165,7 @@ function periodAt(startTime: string): FocusPeriod {
 }
 
 function sessionOverlaps(candidate: Candidate, session: StudySession) {
-  return (
-    candidate.date === session.date &&
-    overlaps(minutes(candidate.startTime), minutes(candidate.endTime), minutes(session.startTime), minutes(session.endTime))
-  );
+  return candidate.date === session.date && overlaps(minutes(candidate.startTime), minutes(candidate.endTime), minutes(session.startTime), minutes(session.endTime));
 }
 
 function sessionTooClose(candidate: Candidate, session: StudySession, minimumBreak: number) {
@@ -196,23 +180,13 @@ function sessionTooClose(candidate: Candidate, session: StudySession, minimumBre
 }
 
 function nearestDeadline(events: AcademicEvent[], courseId: string, date: string) {
-  return events
-    .filter((event) => event.courseId === courseId && event.date >= date)
-    .sort((a, b) => a.date.localeCompare(b.date))[0];
+  return events.filter((event) => event.courseId === courseId && event.date >= date).sort((a, b) => a.date.localeCompare(b.date))[0];
 }
 
-function candidateScore(
-  candidate: Candidate,
-  course: PlanningSnapshot["courseFactors"][number],
-  assigned: StudySession[],
-  input: SchedulingInput,
-) {
+function candidateScore(candidate: Candidate, course: PlanningSnapshot["courseFactors"][number], assigned: StudySession[], input: SchedulingInput) {
   let score = course.score;
-  const sameDay = assigned.some((session) => session.courseId === course.courseId && session.date === candidate.date);
-  if (sameDay) score -= 0.45;
-  const lastSession = assigned
-    .filter((session) => session.courseId === course.courseId)
-    .sort((a, b) => b.date.localeCompare(a.date))[0];
+  if (assigned.some((session) => session.courseId === course.courseId && session.date === candidate.date)) score -= 0.45;
+  const lastSession = assigned.filter((session) => session.courseId === course.courseId).sort((a, b) => b.date.localeCompare(a.date))[0];
   if (lastSession && lastSession.date === addDays(candidate.date, -1)) score -= 0.2;
   if (input.focusPeriods.includes(periodAt(candidate.startTime))) score += course.score * 0.12;
   const deadline = nearestDeadline(input.academicEvents, course.courseId, candidate.date);
@@ -224,15 +198,7 @@ function candidateScore(
   return score;
 }
 
-function createCandidates(
-  start: string,
-  duration: number,
-  availability: TimeRange[],
-  classSchedules: Record<string, TimeRange[]>,
-  preserved: StudySession[],
-  minimumBreak: number,
-  horizonDays: number,
-) {
+function createCandidates(start: string, duration: number, availability: TimeRange[], classSchedules: Record<string, TimeRange[]>, preserved: StudySession[], minimumBreak: number, horizonDays: number) {
   const classes = Object.values(classSchedules).flat();
   const candidates: Candidate[] = [];
   const merged = mergeAvailability(availability);
@@ -243,16 +209,8 @@ function createCandidates(
       let cursor = minutes(range.start);
       const end = minutes(range.end);
       while (cursor + duration <= end) {
-        const candidate = {
-          date,
-          day,
-          startTime: timeString(cursor),
-          endTime: timeString(cursor + duration),
-          duration,
-        };
-        const classConflict = classes.some(
-          (fixed) => fixed.day === day && overlaps(cursor, cursor + duration, minutes(fixed.start), minutes(fixed.end)),
-        );
+        const candidate = { date, day, startTime: timeString(cursor), endTime: timeString(cursor + duration), duration };
+        const classConflict = classes.some((fixed) => fixed.day === day && overlaps(cursor, cursor + duration, minutes(fixed.start), minutes(fixed.end)));
         const historyConflict = preserved.some((session) => sessionOverlaps(candidate, session));
         const historySpacing = preserved.some((session) => sessionTooClose(candidate, session, minimumBreak));
         if (!classConflict && !historyConflict && !historySpacing) candidates.push(candidate);
@@ -263,83 +221,112 @@ function createCandidates(
   return candidates;
 }
 
+function weekOffset(start: string, date: string) {
+  return Math.floor((dateAtUtc(date).getTime() - dateAtUtc(start).getTime()) / 86_400_000 / 7);
+}
+
+function appendSession(
+  assigned: StudySession[],
+  candidate: Candidate,
+  course: Course,
+  factor: PlanningSnapshot["courseFactors"][number],
+) {
+  const sessionKey = `session-${candidate.date}-${candidate.startTime.replace(":", "")}-${course.id}`;
+  assigned.push({
+    id: sessionKey,
+    sessionKey,
+    courseId: course.id,
+    courseName: course.name,
+    date: candidate.date,
+    startTime: candidate.startTime,
+    endTime: candidate.endTime,
+    duration: candidate.duration,
+    status: "planned",
+    prioritySnapshot: { ...factor.factors, score: factor.score },
+  });
+}
+
 export function generateStudyPlan(input: SchedulingInput): StudyPlan {
   const policy = resolvePolicy(input.policy);
   const start = dateString(input.today);
   const end = addDays(start, policy.horizonDays - 1);
-  const sessionDuration = Math.min(
-    policy.maximumSessionDuration,
-    Math.max(15, Math.round(input.focusDuration / 5) * 5),
-  );
-  const capacity = calculateWeeklyCapacity(
-    input.availability,
-    input.activityDensity,
-    input.procrastination,
-    policy,
-  );
-  const preserved = [...(input.preservedSessions ?? [])];
-  const candidates = createCandidates(
-    start,
-    sessionDuration,
-    input.availability,
-    input.classSchedules,
-    preserved,
-    policy.minimumBreakMinutes,
-    policy.horizonDays,
-  );
+  const preferredDuration = Math.min(policy.maximumSessionDuration, Math.max(15, Math.round(input.focusDuration / 5) * 5));
+  const capacity = calculateWeeklyCapacity(input.availability, input.activityDensity, input.procrastination, policy);
   const courses = input.snapshot.courseFactors.filter((factor) => input.courses.some((course) => course.id === factor.courseId));
-  const totalScore = courses.reduce((sum, course) => sum + course.score, 0) || 1;
+  const baselineDuration = capacity.weeklyCapacityMinutes >= courses.length * 30 ? 30 : 15;
+  const preserved = [...(input.preservedSessions ?? [])];
+  const baselineCandidates = createCandidates(start, baselineDuration, input.availability, input.classSchedules, preserved, policy.minimumBreakMinutes, policy.horizonDays);
+  const extraCandidates = preferredDuration === baselineDuration
+    ? baselineCandidates
+    : createCandidates(start, preferredDuration, input.availability, input.classSchedules, preserved, policy.minimumBreakMinutes, policy.horizonDays);
   const assigned: StudySession[] = [];
   const weeklyMinutes = new Map<number, number>();
   const dailyMinutes = new Map<string, number>();
+  const courseWeeklyMinutes = new Map<string, number>();
   for (const session of preserved) {
-    const offset = Math.floor((dateAtUtc(session.date).getTime() - dateAtUtc(start).getTime()) / 86_400_000);
-    if (offset >= 0 && offset < policy.horizonDays) {
-      dailyMinutes.set(session.date, (dailyMinutes.get(session.date) ?? 0) + session.duration);
-      weeklyMinutes.set(Math.floor(offset / 7), (weeklyMinutes.get(Math.floor(offset / 7)) ?? 0) + session.duration);
+    const week = weekOffset(start, session.date);
+    if (week < 0 || week >= Math.ceil(policy.horizonDays / 7)) continue;
+    weeklyMinutes.set(week, (weeklyMinutes.get(week) ?? 0) + session.duration);
+    dailyMinutes.set(session.date, (dailyMinutes.get(session.date) ?? 0) + session.duration);
+    const key = `${week}|${session.courseId}`;
+    courseWeeklyMinutes.set(key, (courseWeeklyMinutes.get(key) ?? 0) + session.duration);
+  }
+
+  // First give each course a fair baseline weekly slot; use 15 minutes only when 30 cannot fit.
+  for (let week = 0; week < Math.ceil(policy.horizonDays / 7); week += 1) {
+    const covered = new Set<string>();
+    for (const candidate of baselineCandidates.filter((item) => weekOffset(start, item.date) === week)) {
+      const currentWeek = weeklyMinutes.get(week) ?? 0;
+      if (currentWeek + candidate.duration > capacity.weeklyCapacityMinutes) continue;
+      if ((dailyMinutes.get(candidate.date) ?? 0) + candidate.duration > policy.dailyMaximumMinutes) continue;
+      if (assigned.some((session) => sessionTooClose(candidate, session, policy.minimumBreakMinutes))) continue;
+      const ranked = courses
+        .filter((factor) => !covered.has(factor.courseId) && (courseWeeklyMinutes.get(`${week}|${factor.courseId}`) ?? 0) < baselineDuration)
+        .sort((a, b) => {
+          const aMinutes = courseWeeklyMinutes.get(`${week}|${a.courseId}`) ?? 0;
+          const bMinutes = courseWeeklyMinutes.get(`${week}|${b.courseId}`) ?? 0;
+          const rotationA = (courses.findIndex((item) => item.courseId === a.courseId) - week + courses.length) % Math.max(courses.length, 1);
+          const rotationB = (courses.findIndex((item) => item.courseId === b.courseId) - week + courses.length) % Math.max(courses.length, 1);
+          return aMinutes - bMinutes || rotationA - rotationB || a.courseId.localeCompare(b.courseId);
+        });
+      const factor = ranked[0];
+      const course = factor && input.courses.find((item) => item.id === factor.courseId);
+      if (!factor || !course) continue;
+      appendSession(assigned, candidate, course, factor);
+      covered.add(course.id);
+      weeklyMinutes.set(week, currentWeek + candidate.duration);
+      dailyMinutes.set(candidate.date, (dailyMinutes.get(candidate.date) ?? 0) + candidate.duration);
+      courseWeeklyMinutes.set(`${week}|${course.id}`, (courseWeeklyMinutes.get(`${week}|${course.id}`) ?? 0) + candidate.duration);
     }
   }
-  for (const candidate of candidates) {
-    const offset = Math.floor((dateAtUtc(candidate.date).getTime() - dateAtUtc(start).getTime()) / 86_400_000);
-    const week = Math.floor(offset / 7);
+
+  // Then use remaining capacity for weighted priority allocation.
+  const totalScore = courses.reduce((sum, course) => sum + course.score, 0) || 1;
+  for (const candidate of extraCandidates) {
+    const week = weekOffset(start, candidate.date);
     const currentWeek = weeklyMinutes.get(week) ?? 0;
     if (currentWeek + candidate.duration > capacity.weeklyCapacityMinutes) continue;
     if ((dailyMinutes.get(candidate.date) ?? 0) + candidate.duration > policy.dailyMaximumMinutes) continue;
-    if (assigned.some((session) => sessionTooClose(candidate, session, policy.minimumBreakMinutes))) continue;
+    const occupied = [...preserved, ...assigned];
+    if (occupied.some((session) => sessionTooClose(candidate, session, policy.minimumBreakMinutes))) continue;
     const ranked = courses
-      .map((course) => {
-        const target = capacity.weeklyCapacityMinutes * (course.score / totalScore);
-        const used = assigned
-          .filter((session) => session.courseId === course.courseId && Math.floor((dateAtUtc(session.date).getTime() - dateAtUtc(start).getTime()) / 86_400_000 / 7) === week)
-          .reduce((sum, session) => sum + session.duration, 0);
-        const remaining = Math.max(0, target - used);
-        return { course, score: remaining / sessionDuration + candidateScore(candidate, course, [...preserved, ...assigned], input) };
+      .map((factor) => {
+        const used = courseWeeklyMinutes.get(`${week}|${factor.courseId}`) ?? 0;
+        const target = capacity.weeklyCapacityMinutes * (factor.score / totalScore);
+        const weightedNeed = Math.max(0, target - used) / Math.max(preferredDuration, 1);
+        return { factor, score: weightedNeed + candidateScore(candidate, factor, occupied, input) };
       })
-      .sort((a, b) => b.score - a.score || a.course.courseId.localeCompare(b.course.courseId));
-    const selected = ranked[0]?.course;
-    if (!selected) continue;
-    const course = input.courses.find((item) => item.id === selected.courseId);
-    if (!course) continue;
-    const sessionKey = `session-${candidate.date}-${candidate.startTime.replace(":", "")}-${course.id}`;
-    assigned.push({
-      id: sessionKey,
-      sessionKey,
-      courseId: course.id,
-      courseCode: course.code,
-      courseName: course.name,
-      date: candidate.date,
-      startTime: candidate.startTime,
-      endTime: candidate.endTime,
-      duration: candidate.duration,
-      status: "planned",
-      prioritySnapshot: { ...selected.factors, score: selected.score },
-    });
-    dailyMinutes.set(candidate.date, (dailyMinutes.get(candidate.date) ?? 0) + candidate.duration);
+      .sort((a, b) => b.score - a.score || a.factor.courseId.localeCompare(b.factor.courseId));
+    const selected = ranked[0];
+    const course = selected && input.courses.find((item) => item.id === selected.factor.courseId);
+    if (!selected || !course) continue;
+    appendSession(assigned, candidate, course, selected.factor);
     weeklyMinutes.set(week, currentWeek + candidate.duration);
+    dailyMinutes.set(candidate.date, (dailyMinutes.get(candidate.date) ?? 0) + candidate.duration);
+    courseWeeklyMinutes.set(`${week}|${course.id}`, (courseWeeklyMinutes.get(`${week}|${course.id}`) ?? 0) + candidate.duration);
   }
-  const sessions = [...preserved, ...assigned].sort((a, b) =>
-    `${a.date}T${a.startTime}|${a.id}`.localeCompare(`${b.date}T${b.startTime}|${b.id}`),
-  );
+
+  const sessions = [...preserved, ...assigned].sort((a, b) => `${a.date}T${a.startTime}|${a.id}`.localeCompare(`${b.date}T${b.startTime}|${b.id}`));
   return {
     id: `plan-${start}-${end}`,
     generatedAt: typeof input.today === "string" ? `${start}T00:00:00.000Z` : input.today.toISOString(),

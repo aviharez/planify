@@ -29,9 +29,9 @@ test("overlay Google hanya melakukan GET saat listing dan tidak menyentuh update
 });
 
 test("pemetaan event menyimpan timezone dan metadata kepemilikan aplikasi", () => {
-  const event = mapStudySessionToCalendarEvent(session, "Asia/Jakarta");
+  const event = mapStudySessionToCalendarEvent(session, "Etc/GMT-7");
   assert.equal(event.start.dateTime, "2026-08-25T19:00:00");
-  assert.equal(event.start.timeZone, "Asia/Jakarta");
+  assert.equal(event.start.timeZone, "Etc/GMT-7");
   assert.equal(event.extendedProperties.private.planifyManaged, "true");
   assert.equal(event.extendedProperties.private.planifySessionKey, "s-1");
 });
@@ -46,12 +46,12 @@ test("masa depan memakai tanggal lokal dan waktu akhir sesi", () => {
 test("ID event deterministik dikirim di body insert untuk retry idempotent", async () => {
   let requestBody = "";
   const provider = {
-    async insert(_calendar: string, event: object, eventId: string) { requestBody = JSON.stringify({ ...event, id: eventId }); return { id: eventId }; },
+    async insert(_calendar: string, event: Record<string, unknown>, eventId: string) { requestBody = JSON.stringify({ ...event, id: eventId }); return { id: eventId }; },
     async update() { return {}; },
     async delete() {},
     async get() { return owned("s-1"); },
   };
-  await syncManagedEvents(provider, { sessions: [session], links: [], calendarId: "primary", timeZone: "Asia/Jakarta", ...timing });
+  await syncManagedEvents(provider, { sessions: [session], links: [], calendarId: "primary", timeZone: "Etc/GMT-7", ...timing });
   assert.equal(JSON.parse(requestBody).id, deterministicCalendarEventId("row-1"));
   assert.match(JSON.parse(requestBody).id, /^a[0-9a-f]{64}$/);
 });
@@ -67,7 +67,7 @@ test("sinkronisasi memverifikasi link, meng-update yang dimiliki, membuat baru, 
   const result = await syncManagedEvents(provider, {
     sessions: [session, { ...session, id: "row-2", sessionKey: "s-2", date: "2026-08-26" }],
     links: [{ studySessionId: "row-1", sessionKey: "s-1", googleEventId: "google-old", googleCalendarId: "primary", sessionDate: session.date, sessionEndTime: session.endTime }, { studySessionId: "row-old", sessionKey: "old", googleEventId: "google-stale", googleCalendarId: "primary", sessionDate: "2026-08-30", sessionEndTime: "19:00" }],
-    calendarId: "primary", timeZone: "Asia/Jakarta", ...timing,
+    calendarId: "primary", timeZone: "Etc/GMT-7", ...timing,
   });
   assert.deepEqual(calls, ["get:google-old", "update:google-old", "insert", "get:google-stale", "delete:google-stale"]);
   assert.equal(result.inserts[0]?.eventId, "google-new");
@@ -79,14 +79,14 @@ test("link aktif korup tidak menyentuh event unmanaged dan dipindahkan ke ID det
   const deterministicId = deterministicCalendarEventId("row-1");
   const provider = {
     get: async (_calendar: string, eventId: string) => { calls.push(`get:${eventId}`); return eventId === "google-unmanaged" ? owned("other-session") : owned("s-1"); },
-    insert: async (calendar: string, _event: object, eventId: string) => { calls.push(`insert:${calendar}:${eventId}`); return { id: eventId }; },
+    insert: async (calendar: string, _event: Record<string, unknown>, eventId: string) => { calls.push(`insert:${calendar}:${eventId}`); return { id: eventId }; },
     update: async () => { calls.push("update"); return {}; },
     delete: async () => { calls.push("delete"); },
   };
   const result = await syncManagedEvents(provider, {
     sessions: [session],
     links: [{ studySessionId: "row-1", sessionKey: "s-1", googleEventId: "google-unmanaged", googleCalendarId: "malicious-calendar", sessionDate: session.date, sessionEndTime: session.endTime }],
-    calendarId: "primary", timeZone: "Asia/Jakarta", ...timing,
+    calendarId: "primary", timeZone: "Etc/GMT-7", ...timing,
   });
   assert.deepEqual(calls, [`get:google-unmanaged`, `insert:primary:${deterministicId}`]);
   assert.equal(result.updates[0]?.eventId, deterministicId);
@@ -103,7 +103,7 @@ test("stale unmanaged event tidak dihapus meski tautan lokal dihapus", async () 
   }, {
     sessions: [],
     links: [{ studySessionId: "old", sessionKey: "old", googleEventId: "external", googleCalendarId: "primary", sessionDate: "2026-08-30", sessionEndTime: "19:00" }],
-    calendarId: "primary", timeZone: "Asia/Jakarta", ...timing,
+    calendarId: "primary", timeZone: "Etc/GMT-7", ...timing,
   });
   assert.deepEqual(calls, ["get"]);
   assert.equal(result.deletes[0]?.outcome, "unmanaged");
@@ -122,7 +122,7 @@ test("tautan sesi lampau dan sesi yang sudah berakhir hari ini tidak disentuh Go
       { studySessionId: "past", sessionKey: "past", googleEventId: "google-past", googleCalendarId: "primary", sessionDate: "2026-08-20", sessionEndTime: "19:00" },
       { studySessionId: "today-past", sessionKey: "today-past", googleEventId: "google-today", googleCalendarId: "primary", sessionDate: "2026-08-24", sessionEndTime: "18:59" },
     ],
-    calendarId: "primary", timeZone: "Asia/Jakarta", ...timing,
+    calendarId: "primary", timeZone: "Etc/GMT-7", ...timing,
   });
   assert.deepEqual(calls, []);
   assert.deepEqual(result.deletes, []);
@@ -146,7 +146,7 @@ test("409 insert dipulihkan hanya jika event deterministik memiliki metadata Pla
     update: async () => ({}),
     delete: async () => undefined,
   };
-  const result = await syncManagedEvents(provider, { sessions: [session], links: [], calendarId: "primary", timeZone: "Asia/Jakarta", ...timing });
+  const result = await syncManagedEvents(provider, { sessions: [session], links: [], calendarId: "primary", timeZone: "Etc/GMT-7", ...timing });
   assert.equal(result.inserts[0]?.eventId, deterministicCalendarEventId("row-1"));
 });
 
@@ -157,6 +157,6 @@ test("kegagalan Google menghentikan rekonsiliasi tanpa menghapus link berikutnya
     get: async () => { calls.push("get"); return owned("s-1"); },
     update: async () => ({}),
     delete: async () => { calls.push("delete"); },
-  }, { sessions: [session], links: [], calendarId: "primary", timeZone: "Asia/Jakarta", ...timing }));
+  }, { sessions: [session], links: [], calendarId: "primary", timeZone: "Etc/GMT-7", ...timing }));
   assert.deepEqual(calls, ["insert"]);
 });

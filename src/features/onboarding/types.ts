@@ -31,11 +31,8 @@ export type AcademicEventType =
 
 export type Course = {
   id: string;
-  code: string;
   name: string;
   credits: number;
-  semester: number;
-  status?: string;
   confidence?: number;
   needsVerification?: boolean;
 };
@@ -47,7 +44,7 @@ export type KrsConflict = {
 };
 
 export type KrsExtractionMetadata = {
-  source: "pdf-text" | "ocr" | "manual" | "demo";
+  source: "pdf-text" | "ocr" | "manual";
   status: "pending" | "processing" | "completed" | "failed" | "manual";
   confidence: number;
   ocrConfidence?: number;
@@ -133,7 +130,6 @@ export type PlanningSnapshot = {
   weights: PriorityWeights;
   courseFactors: Array<{
     courseId: string;
-    code: string;
     name: string;
     factors: PriorityFactors;
     score: number;
@@ -153,7 +149,6 @@ export type StudySession = {
   id: string;
   sessionKey: string;
   courseId: string;
-  courseCode: string;
   courseName: string;
   date: string;
   startTime: string;
@@ -206,9 +201,17 @@ export const DAYS = [
   "Minggu",
 ] as const;
 
+function localTimeZone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
 export const initialOnboardingData: OnboardingData = {
   step: 0,
-  timezone: "Asia/Jakarta",
+  timezone: localTimeZone(),
   krsFileName: "",
   krsFileType: "",
   krsFileSize: 0,

@@ -1,13 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mockCourses } from "./mock-data";
-import { normalizeMockCourses } from "./normalize";
-import { canAdvance, nextStep } from "./state";
+import { canAdvance, nextStep, onboardingDataSchema } from "./state";
 import { initialOnboardingData } from "./types";
 
 test("wizard hanya maju jika KRS dan mata kuliah tersedia", () => {
   assert.equal(canAdvance(initialOnboardingData), false);
-  const ready = { ...initialOnboardingData, krsFileName: "krs.pdf", courses: mockCourses };
+  const ready = {
+    ...initialOnboardingData,
+    krsFileName: "krs.pdf",
+    courses: [{ id: "a", name: "Algoritma", credits: 3 }],
+  };
   assert.equal(canAdvance(ready), true);
   assert.equal(nextStep(ready).step, 1);
 });
@@ -16,23 +18,24 @@ test("wizard tidak maju saat KRS masih diproses atau gagal", () => {
   const ready = {
     ...initialOnboardingData,
     krsFileName: "krs.pdf",
-    courses: mockCourses,
+    courses: [{ id: "a", name: "Algoritma", credits: 3 }],
   };
-  assert.equal(
-    canAdvance({ ...ready, krsExtraction: { ...initialOnboardingData.krsExtraction!, status: "processing" } }),
-    false,
-  );
-  assert.equal(
-    canAdvance({ ...ready, krsExtraction: { ...initialOnboardingData.krsExtraction!, status: "failed" } }),
-    false,
-  );
+  assert.equal(canAdvance({ ...ready, krsExtraction: { ...initialOnboardingData.krsExtraction!, status: "processing" } }), false);
+  assert.equal(canAdvance({ ...ready, krsExtraction: { ...initialOnboardingData.krsExtraction!, status: "failed" } }), false);
 });
 
-test("normalisasi mock KRS menghapus duplikasi identik dan menjaga konflik", () => {
-  const [first] = mockCourses;
-  const duplicate = { ...first, name: ` ${first.name.toLowerCase()} ` };
-  const conflict = { ...first, id: "conflict", semester: 4 };
-  const result = normalizeMockCourses([first, duplicate, conflict]);
-  assert.equal(result.courses.length, 1);
-  assert.equal(result.conflicts.length, 1);
+test("payload lama dinormalisasi menjadi state kanonik tanpa kode atau demo", () => {
+  const result = onboardingDataSchema.safeParse({
+    ...initialOnboardingData,
+    timezone: "Etc/GMT-7",
+    courses: [{ id: "a", code: "IF-001", semester: 3, status: "Approved", name: " Algoritma ", credits: 3 }],
+    krsExtraction: { ...initialOnboardingData.krsExtraction!, source: "demo" },
+    planningSnapshot: undefined,
+  });
+  assert.equal(result.success, true);
+  if (result.success) {
+    assert.deepEqual(result.data.courses, [{ id: "a", name: " Algoritma ", credits: 3 }]);
+    assert.equal(result.data.krsExtraction?.source, "manual");
+    assert.equal("code" in result.data.courses[0], false);
+  }
 });

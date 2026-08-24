@@ -7,6 +7,7 @@ import { ScrollTrigger } from "gsap/ScrollTrigger";
 import {
   ArrowLeft,
   ArrowRight,
+  BookOpen,
   CalendarDays,
   Check,
   ChevronDown,
@@ -28,10 +29,7 @@ import {
   X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  createSupabaseBrowserClient,
-  isSupabaseConfigured,
-} from "@/lib/supabase/browser";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import {
   initialOnboardingData,
   ONBOARDING_STEPS,
@@ -242,10 +240,8 @@ function ReflectionCarousel() {
 }
 
 function AuthPanel({
-  onDemo,
   onAuthenticated,
 }: {
-  onDemo: () => void;
   onAuthenticated: () => void;
 }) {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
@@ -288,7 +284,10 @@ function AuthPanel({
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!supabase) return onDemo();
+    if (!supabase) {
+      setMessage("Layanan akun belum dikonfigurasi.");
+      return;
+    }
     setBusy(true);
     setMessage("");
     if (mode === "atur-ulang") {
@@ -320,7 +319,7 @@ function AuthPanel({
 
   async function resetPassword() {
     if (!supabase || !email)
-      return setMessage("Masukkan email terlebih dahulu.");
+      return setMessage(supabase ? "Masukkan email terlebih dahulu." : "Layanan akun belum dikonfigurasi.");
     setBusy(true);
     const result = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo: `${window.location.origin}/`,
@@ -341,12 +340,12 @@ function AuthPanel({
         </div>
         <div>
           <p className="text-sm font-semibold text-moss">
-            {isSupabaseConfigured() ? "Akun Planify" : "Mode demo lokal"}
+            Akun Planify
           </p>
           <p className="text-xs text-ink/60">
-            {isSupabaseConfigured()
-              ? "Progresmu tersimpan di Supabase."
-              : "Tidak perlu akun untuk mencoba alur."}
+            {supabase
+              ? "Masuk untuk menyimpan data semester dan rencana belajar."
+              : "Layanan akun belum dikonfigurasi di lingkungan ini."}
           </p>
         </div>
       </div>
@@ -441,19 +440,11 @@ function AuthPanel({
           </button>
         )}
       </div>
-      <div className="my-6 flex items-center gap-3 text-xs uppercase tracking-[0.14em] text-ink/40">
-        <span className="h-px flex-1 bg-ink/15" />
-        atau
-        <span className="h-px flex-1 bg-ink/15" />
-      </div>
-      <button
-        type="button"
-        onClick={onDemo}
-        className="flex h-12 w-full items-center justify-center gap-2 rounded-xl border border-ink/20 bg-transparent px-4 font-semibold text-ink transition hover:border-moss hover:bg-sage/40"
-      >
-        <Sparkles size={17} />
-        Coba mode demo
-      </button>
+      {!supabase && (
+        <p className="mt-6 rounded-xl bg-sand p-3 text-sm leading-5 text-ink/70" role="alert">
+          Tambahkan konfigurasi Supabase untuk masuk atau membuat akun.
+        </p>
+      )}
     </div>
   );
 }
@@ -616,7 +607,6 @@ async function storeStudyPlan(
     user_id: authData.user.id,
     semester_id: semester.id,
     course_key: session.courseId,
-    course_code: session.courseCode,
     course_name: session.courseName,
     session_key: session.sessionKey,
     session_date: session.date,
@@ -690,12 +680,9 @@ function KrsStep({
         },
       });
       const courses = extraction.candidates.map((candidate, index) => ({
-        id: `course-${candidate.code.toLowerCase()}-${index}`,
-        code: candidate.code,
+        id: `course-${candidate.name.toLocaleLowerCase("id-ID").replace(/[^a-z0-9]+/gi, "-")}-${candidate.credits}-${index}`,
         name: candidate.name,
         credits: candidate.credits,
-        semester: candidate.semester,
-        status: candidate.status,
         confidence: candidate.confidence,
         needsVerification: candidate.needsVerification,
       }));
@@ -711,7 +698,11 @@ function KrsStep({
       }
       setStage(3);
       setProcessing(false);
-      setWarning(storage.warning ?? "");
+      setWarning(
+        extraction.candidates.length
+          ? storage.warning ?? ""
+          : "Belum ada baris mata kuliah yang dapat dipastikan. Periksa berkas atau isi mata kuliah secara manual.",
+      );
       update({
         courses,
         semester: extraction.academicPeriod ?? data.semester,
@@ -764,7 +755,7 @@ function KrsStep({
       },
       courses: data.courses.length
         ? data.courses
-        : [{ id: uid("course"), code: "", name: "", credits: 3, semester: 3 }],
+        : [{ id: uid("course"), name: "", credits: 3 }],
     });
     setStage(3);
   }
@@ -909,7 +900,7 @@ function KrsStep({
           <LockKeyhole size={15} className="mt-0.5 shrink-0 text-moss" />
           {authenticated
             ? "Berkas asli disimpan privat di Supabase saat berhasil diunggah."
-            : "Mode lokal memproses berkas di perangkat ini dan tidak mengunggahnya."}
+            : "Berkas asli hanya disimpan privat setelah akun tersambung."}
         </div>
       </div>
       <div className="relative overflow-hidden rounded-[2rem] bg-moss p-7 text-cream shadow-soft sm:p-9">
@@ -950,25 +941,13 @@ function CourseForm({
   const [draft, setDraft] = useState<Course>(
     course ?? {
       id: uid("course"),
-      code: "",
       name: "",
       credits: 3,
-      semester: 3,
     },
   );
   return (
     <div className="rounded-2xl border border-coral/30 bg-coral/5 p-4">
-      <div className="grid gap-3 sm:grid-cols-[.7fr_1.4fr_.5fr_.5fr_auto]">
-        <label className="text-xs font-semibold text-ink/65">
-          Kode
-          <input
-            value={draft.code}
-            onChange={(event) =>
-              setDraft({ ...draft, code: event.target.value })
-            }
-            className="mt-1 h-11 w-full rounded-lg border border-ink/15 bg-white px-3 text-sm"
-          />
-        </label>
+      <div className="grid gap-3 sm:grid-cols-[1.4fr_.5fr_auto]">
         <label className="text-xs font-semibold text-ink/65">
           Nama mata kuliah
           <input
@@ -992,28 +971,14 @@ function CourseForm({
             className="mt-1 h-11 w-full rounded-lg border border-ink/15 bg-white px-3 text-sm"
           />
         </label>
-        <label className="text-xs font-semibold text-ink/65">
-          Semester
-          <input
-            min={1}
-            max={20}
-            type="number"
-            value={draft.semester}
-            onChange={(event) =>
-              setDraft({ ...draft, semester: Number(event.target.value) })
-            }
-            className="mt-1 h-11 w-full rounded-lg border border-ink/15 bg-white px-3 text-sm"
-          />
-        </label>
         <div className="flex items-end gap-2">
           <button
             type="button"
             onClick={() =>
-              draft.code.trim() &&
               draft.name.trim() &&
+              draft.credits > 0 &&
               onSave({
                 ...draft,
-                code: draft.code.trim().toUpperCase(),
                 name: draft.name.trim(),
               })
             }
@@ -1089,18 +1054,12 @@ function CoursesStep({
               />
             ) : (
               <div className="flex items-center gap-4">
-                <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-sage font-bold text-moss">
-                  {course.code.slice(-2)}
+                <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-sage font-bold text-moss" aria-hidden="true">
+                  <BookOpen size={20} />
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="font-semibold">{course.code}</p>
-                  <p className="mt-1 truncate text-sm text-ink/70">
-                    {course.name}
-                  </p>
-                  <p className="mt-1 text-xs text-ink/50">
-                    {course.credits} SKS · Semester {course.semester}
-                    {course.status ? ` · ${course.status}` : ""}
-                  </p>
+                  <p className="font-semibold">{course.name}</p>
+                  <p className="mt-1 text-xs text-ink/50">{course.credits} SKS</p>
                   {course.needsVerification && (
                     <p className="mt-1 text-xs font-semibold text-coral">
                       Perlu diperiksa
@@ -1266,7 +1225,6 @@ function ScheduleStep({
   data: OnboardingData;
   update: (patch: Partial<OnboardingData>) => void;
 }) {
-  const [selectedDay, setSelectedDay] = useState("Senin");
   const applyPreset = (preset: "malam" | "akhir-pekan") =>
     update({
       availability:
@@ -1372,18 +1330,6 @@ function ScheduleStep({
               Atur Sendiri
             </button>
           </div>
-          <div className="mt-5 flex gap-1 overflow-x-auto pb-2">
-            {DAYS.map((day) => (
-              <button
-                type="button"
-                key={day}
-                onClick={() => setSelectedDay(day)}
-                className={`min-w-12 rounded-xl px-2 py-3 text-xs font-semibold transition ${selectedDay === day ? "bg-moss text-cream" : "bg-sage/50 text-moss hover:bg-sage"}`}
-              >
-                {day.slice(0, 3)}
-              </button>
-            ))}
-          </div>
           <TimeRangeEditor
             ranges={data.availability}
             onChange={(ranges) => update({ availability: ranges })}
@@ -1393,7 +1339,7 @@ function ScheduleStep({
             type="button"
             onClick={() =>
               update({
-                availability: [...data.availability, makeRange(selectedDay)],
+                availability: [...data.availability, makeRange("Senin")],
               })
             }
             className="mt-3 flex min-h-11 items-center gap-2 rounded-lg px-2 text-sm font-semibold text-moss hover:bg-sage/50"
@@ -1604,7 +1550,6 @@ function EvaluationStep({
             <h2 className="mt-12 text-3xl font-bold leading-tight tracking-[-0.05em]">
               {course.name}
             </h2>
-            <p className="mt-3 text-sm text-cream/60">{course.code}</p>
             <div className="mt-12 flex items-center justify-between gap-2">
               {data.courses.map((item, index) => (
                 <button
@@ -1772,30 +1717,26 @@ function EvaluationStep({
                 )}
             </section>
             <div className="flex items-center justify-between gap-3">
-              <button
-                type="button"
-                disabled={courseIndex === 0}
-                onClick={() =>
-                  setCourseIndex((index) => Math.max(0, index - 1))
-                }
-                className="flex min-h-11 items-center gap-2 rounded-xl border border-ink/15 px-4 text-sm font-semibold disabled:opacity-40"
-              >
-                <ArrowLeft size={16} />
-                Sebelumnya
-              </button>
-              <button
-                type="button"
-                disabled={courseIndex === data.courses.length - 1}
-                onClick={() =>
-                  setCourseIndex((index) =>
-                    Math.min(data.courses.length - 1, index + 1),
-                  )
-                }
-                className="flex min-h-11 items-center gap-2 rounded-xl bg-moss px-4 text-sm font-semibold text-cream disabled:opacity-40"
-              >
-                Berikutnya
-                <ArrowRight size={16} />
-              </button>
+              {courseIndex > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setCourseIndex((index) => index - 1)}
+                  className="flex min-h-11 items-center gap-2 rounded-xl border border-ink/15 px-4 text-sm font-semibold"
+                >
+                  <ArrowLeft size={16} />
+                  Sebelumnya
+                </button>
+              )}
+              {courseIndex < data.courses.length - 1 && (
+                <button
+                  type="button"
+                  onClick={() => setCourseIndex((index) => index + 1)}
+                  className="ml-auto flex min-h-11 items-center gap-2 rounded-xl bg-moss px-4 text-sm font-semibold text-cream"
+                >
+                  Berikutnya
+                  <ArrowRight size={16} />
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -1826,7 +1767,6 @@ function SummaryStep({
       calculatePriority(
         {
           courseId: course.id,
-          code: course.code,
           name: course.name,
           credits: course.credits,
           understanding: data.evaluations[course.id]?.understanding,
@@ -2105,7 +2045,6 @@ function PlanGenerating() {
 export default function OnboardingApp() {
   const [data, setData] = useState<OnboardingData>(initialOnboardingData);
   const [hydrated, setHydrated] = useState(false);
-  const [demoStarted, setDemoStarted] = useState(false);
   const [generationReady, setGenerationReady] = useState(false);
   const [generationStatus, setGenerationStatus] = useState<
     "idle" | "processing" | "ready"
@@ -2119,31 +2058,10 @@ export default function OnboardingApp() {
   useEffect(() => {
     let cancelled = false;
     const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    const localSetup = (() => {
-      try {
-        return onboardingDataSchema.parse(
-          JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "null"),
-        ) as OnboardingData;
-      } catch {
-        return null;
-      }
-    })();
-
     async function hydrate() {
       if (!supabase) {
-        if (localSetup) {
-          const nextData = { ...localSetup, timezone, planActive: Boolean(localSetup.planActive && localSetup.studyPlan) };
-          if (resolveLifecycle(nextData) === "active-use") {
-            window.location.replace("/hari-ini");
-            return;
-          }
-          setData(nextData);
-          setDemoStarted(true);
-          setGenerationReady(Boolean(nextData.planActive && nextData.studyPlan));
-        } else {
-          setData((current) => ({ ...current, timezone }));
-        }
         if (!cancelled) {
+          setData((current) => ({ ...current, timezone }));
           setRemoteReady(true);
           setHydrated(true);
         }
@@ -2155,7 +2073,6 @@ export default function OnboardingApp() {
       if (!sessionData.session || recoveryFlow) {
         if (!cancelled) {
           setData({ ...initialOnboardingData, timezone });
-          setDemoStarted(false);
           setGenerationReady(false);
           setRemoteReady(true);
           setHydrated(true);
@@ -2191,7 +2108,6 @@ export default function OnboardingApp() {
           return;
         }
         setData(nextData);
-        setDemoStarted(true);
         setGenerationReady(Boolean(nextData.planActive && nextData.studyPlan));
         setAuthenticated(true);
         setRemoteReady(true);
@@ -2237,17 +2153,8 @@ export default function OnboardingApp() {
     setSavedNotice(true);
     window.setTimeout(() => setSavedNotice(false), 1200);
   };
-  const beginDemo = () => {
-    setDemoStarted(true);
-    setAuthenticated(false);
-    setRemoteReady(true);
-    setData((current) => ({
-      ...current,
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-    }));
-  };
   const resumeAuthenticated = async () => {
-    if (!supabase) return beginDemo();
+    if (!supabase) return;
     const { data: authData } = await supabase.auth.getUser();
     if (!authData.user) return;
     const { data: semester } = await supabase
@@ -2280,7 +2187,6 @@ export default function OnboardingApp() {
     setData(
       nextData,
     );
-    setDemoStarted(true);
     setAuthenticated(true);
     setGenerationReady(Boolean(nextData.planActive && nextData.studyPlan));
     setRemoteReady(true);
@@ -2288,7 +2194,6 @@ export default function OnboardingApp() {
   const logout = async () => {
     if (supabase) await supabase.auth.signOut();
     setAuthenticated(false);
-    setDemoStarted(false);
     setGenerationReady(false);
     window.location.replace("/");
   };
@@ -2392,7 +2297,7 @@ export default function OnboardingApp() {
     setGenerationWarning(
       warning ||
         (!authenticated
-          ? "Mode lokal: rencana empat minggu tersimpan di perangkat ini."
+          ? "Masuk ke akun untuk menyimpan rencana empat minggu."
           : ""),
     );
     setGenerationStatus("ready");
@@ -2475,7 +2380,7 @@ export default function OnboardingApp() {
         </div>
       </main>
     );
-  if (!demoStarted)
+  if (!authenticated)
     return (
       <main className="grain relative min-h-screen overflow-x-hidden px-5 py-6 sm:px-10 sm:py-8">
         <MotionLayer />
@@ -2508,10 +2413,7 @@ export default function OnboardingApp() {
             </div>
           </div>
           <div>
-            <AuthPanel
-              onDemo={beginDemo}
-              onAuthenticated={resumeAuthenticated}
-            />
+            <AuthPanel onAuthenticated={resumeAuthenticated} />
           </div>
         </div>
         <div className="relative mx-auto max-w-6xl pb-8">
@@ -2537,9 +2439,6 @@ export default function OnboardingApp() {
             Planify
           </a>
           <div className="flex items-center gap-3">
-            <span className="hidden text-xs text-ink/50 sm:inline">
-              {data.timezone}
-            </span>
             <span className="flex items-center gap-1 rounded-full bg-sage/60 px-3 py-1.5 text-xs font-semibold text-moss">
               <LockKeyhole size={12} />
               Tersimpan otomatis

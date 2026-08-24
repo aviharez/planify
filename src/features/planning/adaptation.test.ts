@@ -7,8 +7,8 @@ import type { OnboardingData } from "@/features/onboarding/types";
 
 const data: Pick<OnboardingData, "courses" | "evaluations" | "academicEvents" | "availability" | "classSchedules" | "focusPeriods" | "focusDuration" | "activityDensity" | "procrastination"> = {
   courses: [
-    { id: "a", code: "IF-001", name: "Algoritma", credits: 3, semester: 3 },
-    { id: "b", code: "IF-002", name: "Basis Data", credits: 3, semester: 3 },
+    { id: "a", name: "Algoritma", credits: 3 },
+    { id: "b", name: "Basis Data", credits: 3 },
   ],
   evaluations: { a: { understanding: 2, difficulty: 4 }, b: { understanding: 4, difficulty: 2 } },
   academicEvents: [],

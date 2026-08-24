@@ -4,7 +4,7 @@ import { initialOnboardingData, type OnboardingData } from "./types";
 import { canOpenMainExperience, resolveLifecycle } from "./lifecycle";
 
 function setup(patch: Partial<OnboardingData>): OnboardingData {
-  return { ...initialOnboardingData, krsFileName: "krs.pdf", courses: [{ id: "c", code: "IF-1", name: "Basis Data", credits: 3, semester: 3 }], step: 5, planActive: true, studyPlan: {} as OnboardingData["studyPlan"], ...patch };
+  return { ...initialOnboardingData, krsFileName: "krs.pdf", courses: [{ id: "c", name: "Basis Data", credits: 3 }], step: 5, planActive: true, studyPlan: {} as OnboardingData["studyPlan"], ...patch };
 }
 
 test("lifecycle membedakan setup, plan baru, preview, dan penggunaan aktif", () => {

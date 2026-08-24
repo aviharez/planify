@@ -29,7 +29,6 @@ const snapshotSchema = z.object({
   }),
   courseFactors: z.array(z.object({
     courseId: z.string(),
-    code: z.string(),
     name: z.string(),
     factors: factorsSchema.omit({ score: true }),
     score: z.number(),
@@ -40,7 +39,6 @@ const sessionSchema = z.object({
   id: z.string().min(1),
   sessionKey: z.string().min(1),
   courseId: z.string().min(1),
-  courseCode: z.string().min(1),
   courseName: z.string().min(1),
   date: dateSchema,
   startTime: timeSchema,
@@ -180,7 +178,6 @@ export async function persistAdaptedPlan(input: unknown): Promise<ActionResult> 
     user_id: user.id,
     semester_id: source.semester_id,
     course_key: session.courseId,
-    course_code: session.courseCode,
     course_name: session.courseName,
     session_key: session.sessionKey,
     session_date: session.date,

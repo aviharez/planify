@@ -35,8 +35,7 @@ export class TesseractOcrProvider implements OcrProvider {
     });
     try {
       const result = await worker.recognize(input.image);
-      const confidence = result.data.confidence / 100;
-      return { text: result.data.text, confidence };
+      return { text: result.data.text, confidence: result.data.confidence / 100 };
     } finally {
       await worker.terminate();
     }
@@ -44,6 +43,8 @@ export class TesseractOcrProvider implements OcrProvider {
 }
 
 type PdfTextResult = { text: string; pageCount: number };
+
+type ImageVariant = Blob | HTMLCanvasElement;
 
 function report(
   onProgress: ((progress: ExtractionProgress) => void) | undefined,
@@ -63,11 +64,12 @@ export async function extractPdfText(
   for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
     const page = await document.getPage(pageNumber);
     const content = await page.getTextContent();
-    const text = content.items
-      .map((item) => ("str" in item ? String(item.str) : ""))
-      .filter(Boolean)
-      .join(" ");
-    pages.push(text);
+    pages.push(
+      content.items
+        .map((item) => ("str" in item ? String(item.str) : ""))
+        .filter(Boolean)
+        .join(" "),
+    );
     onProgress?.(pageNumber / document.numPages);
   }
   return { text: pages.join("\n"), pageCount: document.numPages };
@@ -115,8 +117,73 @@ export class KrsExtractionService {
   }
 }
 
-function hasMeaningfulText(text: string, parsed: KrsParseResult) {
-  return text.replace(/\s/g, "").length >= 40 && parsed.candidates.length > 0;
+async function preprocessImage(image: ImageVariant): Promise<ImageVariant[]> {
+  if (typeof document === "undefined" || typeof createImageBitmap !== "function") return [image];
+  let bitmap: ImageBitmap;
+  try {
+    bitmap = await createImageBitmap(image);
+  } catch {
+    return [image];
+  }
+  try {
+    const scale = bitmap.width < 1600 ? 2 : 1.35;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.ceil(bitmap.width * scale);
+    canvas.height = Math.ceil(bitmap.height * scale);
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) return [image];
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+    for (let index = 0; index < pixels.data.length; index += 4) {
+      const gray = Math.round(
+        pixels.data[index] * 0.299 + pixels.data[index + 1] * 0.587 + pixels.data[index + 2] * 0.114,
+      );
+      const contrast = Math.max(0, Math.min(255, Math.round((gray - 128) * 1.25 + 128)));
+      pixels.data[index] = contrast;
+      pixels.data[index + 1] = contrast;
+      pixels.data[index + 2] = contrast;
+    }
+    context.putImageData(pixels, 0, 0);
+    return [image, canvas];
+  } finally {
+    bitmap.close();
+  }
+}
+
+function parseQuality(parsed: KrsParseResult) {
+  return parsed.candidates.length * 10 + parsed.confidence;
+}
+
+type ParsedOcrResult = OcrResult & { parsed: KrsParseResult };
+
+export function selectBestOcrResult(results: ParsedOcrResult[]) {
+  const best = results.reduce<ParsedOcrResult | null>((current, result) =>
+    !current || parseQuality(result.parsed) > parseQuality(current.parsed) ? result : current,
+  null);
+  if (!best) throw new Error("OCR belum menghasilkan teks.");
+  return best;
+}
+
+async function recognizeBest(
+  image: ImageVariant,
+  provider: OcrProvider,
+  page: number | undefined,
+  onProgress: (progress: number) => void,
+): Promise<ParsedOcrResult> {
+  const variants = await preprocessImage(image);
+  const results: ParsedOcrResult[] = [];
+  for (let index = 0; index < variants.length; index += 1) {
+    const result = await provider.extractText({ image: variants[index], page }, (progress) =>
+      onProgress((index + progress) / variants.length),
+    );
+    const parsed = parseKrsText(result.text);
+    results.push({ ...result, parsed });
+  }
+  return selectBestOcrResult(results);
+}
+
+function hasMeaningfulText(_text: string, parsed: KrsParseResult) {
+  return parsed.candidates.length > 0;
 }
 
 export async function extractKrsFile(
@@ -126,11 +193,7 @@ export async function extractKrsFile(
     onProgress?: (progress: ExtractionProgress) => void;
   } = {},
 ): Promise<KrsExtractionResult> {
-  if (![
-    "application/pdf",
-    "image/jpeg",
-    "image/png",
-  ].includes(file.type))
+  if (!["application/pdf", "image/jpeg", "image/png"].includes(file.type))
     throw new Error("Format KRS tidak didukung.");
   if (file.size > 10 * 1024 * 1024) throw new Error("Ukuran KRS terlalu besar.");
   const onProgress = options.onProgress;
@@ -156,7 +219,7 @@ export async function extractKrsFile(
       const provider = options.ocrProvider ?? new TesseractOcrProvider();
       const texts: string[] = [];
       for (let index = 0; index < pages.length; index += 1) {
-        const result = await provider.extractText({ image: pages[index], page: index + 1 }, (progress) =>
+        const result = await recognizeBest(pages[index], provider, index + 1, (progress) =>
           report(onProgress, {
             stage: "recognizing",
             progress: 0.7 + ((index + progress) / pages.length) * 0.2,
@@ -171,7 +234,7 @@ export async function extractKrsFile(
   } else {
     report(onProgress, { stage: "recognizing", progress: 0.2, message: "Mengenali isi dokumen" });
     const provider = options.ocrProvider ?? new TesseractOcrProvider();
-    const result = await provider.extractText({ image: file }, (progress) =>
+    const result = await recognizeBest(file, provider, undefined, (progress) =>
       report(onProgress, { stage: "recognizing", progress: 0.2 + progress * 0.7, message: "Mengenali isi dokumen" }),
     );
     rawText = result.text;
@@ -179,24 +242,21 @@ export async function extractKrsFile(
   }
   report(onProgress, { stage: "parsing", progress: 0.92, message: "Menyiapkan hasil" });
   const parsed = parseKrsText(rawText);
-  if (parsed.candidates.length === 0) throw new Error("Mata kuliah belum berhasil ditemukan.");
   const ocrConfidence = ocrConfidences.length
     ? ocrConfidences.reduce((sum, confidence) => sum + confidence, 0) / ocrConfidences.length
     : undefined;
-  const confidence = ocrConfidence === undefined ? parsed.confidence : parsed.confidence * ocrConfidence;
   const needsVerification = parsed.needsVerification || (ocrConfidence !== undefined && ocrConfidence < 0.8);
   const candidates = ocrConfidence === undefined
     ? parsed.candidates
     : parsed.candidates.map((candidate) => ({
         ...candidate,
-        confidence: candidate.confidence * ocrConfidence,
         needsVerification: candidate.needsVerification || ocrConfidence < 0.8,
       }));
-  report(onProgress, { stage: "done", progress: 1, message: "Dokumen berhasil dibaca" });
+  report(onProgress, { stage: "done", progress: 1, message: candidates.length ? "Dokumen berhasil dibaca" : "Tidak ada baris yang dapat dipastikan" });
   return {
     ...parsed,
     candidates,
-    confidence,
+    confidence: parsed.confidence,
     needsVerification,
     source,
     pageCount,

@@ -8,9 +8,9 @@ import {
 import type { Course, FocusPeriod, StudySession } from "@/features/onboarding/types";
 
 const courses: Course[] = [
-  { id: "a", code: "IF-001", name: "Algoritma", credits: 3, semester: 3 },
-  { id: "b", code: "IF-002", name: "Basis Data", credits: 3, semester: 3 },
-  { id: "c", code: "IF-003", name: "Sistem Operasi", credits: 3, semester: 3 },
+  { id: "a", name: "Algoritma", credits: 3 },
+  { id: "b", name: "Basis Data", credits: 3 },
+  { id: "c", name: "Sistem Operasi", credits: 3 },
 ];
 
 function snapshot() {
@@ -49,7 +49,6 @@ test("jadwal menghormati kelas, sesi tersimpan, batas harian, dan empat minggu",
     id: "existing",
     sessionKey: "existing",
     courseId: "a",
-    courseCode: "IF-001",
     courseName: "Algoritma",
     date: "2026-08-24",
     startTime: "18:00",
@@ -84,6 +83,56 @@ test("jadwal menghormati kelas, sesi tersimpan, batas harian, dan empat minggu",
       session.date === "2026-08-24" && session.startTime < "20:00" && session.endTime > "19:00",
       false,
     );
+  }
+});
+
+test("setiap mata kuliah mendapat baseline dan prioritas mengatur waktu tambahan", () => {
+  const manyCourses: Course[] = ["Algoritma", "Basis Data", "Sistem Operasi", "Jaringan", "Statistika"].map((name, index) => ({ id: `course-${index}`, name, credits: 3 }));
+  const manySnapshot = buildPlanningSnapshot({
+    courses: manyCourses,
+    evaluations: Object.fromEntries(manyCourses.map((course, index) => [course.id, { understanding: index === 0 ? 5 : 2, difficulty: index === 0 ? 1 : 5 }])),
+    academicEvents: [],
+    availability: [{ id: "wide", day: "Senin", start: "08:00", end: "20:00" }, { id: "wide-2", day: "Selasa", start: "08:00", end: "20:00" }],
+  }, { today: "2026-08-23" });
+  const plan = generateStudyPlan({ courses: manyCourses, availability: manySnapshot.availability, classSchedules: {}, focusPeriods: ["Pagi", "Malam"], focusDuration: 45, activityDensity: "Cukup Longgar", academicEvents: [], snapshot: manySnapshot, today: "2026-08-23" });
+  const weekly = new Map<string, number>();
+  for (const session of plan.sessions) {
+    const week = session.date <= "2026-08-29" ? "first" : "second";
+    weekly.set(`${week}|${session.courseId}`, (weekly.get(`${week}|${session.courseId}`) ?? 0) + session.duration);
+  }
+  assert.ok(manyCourses.every((course) => (weekly.get(`first|${course.id}`) ?? 0) >= 30));
+  assert.ok((weekly.get("first|course-1") ?? 0) > (weekly.get("first|course-0") ?? 0));
+});
+
+test("kapasitas terbatas memaksimalkan coverage 15 menit, deterministik, dan berotasi", () => {
+  const limitedCourses: Course[] = ["A", "B", "C", "D", "E"].map((name, index) => ({ id: `limited-${index}`, name, credits: 3 }));
+  const limitedSnapshot = buildPlanningSnapshot({ courses: limitedCourses, evaluations: {}, academicEvents: [], availability: [{ id: "short", day: "Senin", start: "18:00", end: "20:00" }] }, { today: "2026-08-23" });
+  const input = { courses: limitedCourses, availability: limitedSnapshot.availability, classSchedules: {}, focusPeriods: ["Malam"] as FocusPeriod[], focusDuration: 45, activityDensity: "Cukup Longgar" as const, academicEvents: [], snapshot: limitedSnapshot, today: "2026-08-23" };
+  const first = generateStudyPlan(input);
+  const second = generateStudyPlan(input);
+  assert.deepEqual(first, second);
+  const maximumCoverage = Math.min(limitedCourses.length, Math.floor(first.weeklyCapacityMinutes / 15));
+  const weekly = new Map<number, StudySession[]>();
+  for (const session of first.sessions) {
+    const week = Math.floor((Date.parse(`${session.date}T00:00:00Z`) - Date.parse("2026-08-23T00:00:00Z")) / 86_400_000 / 7);
+    weekly.set(week, [...(weekly.get(week) ?? []), session]);
+    assert.ok(session.duration >= 15);
+  }
+  assert.equal(weekly.size, 4);
+  const courseCounts = new Map<string, number>();
+  const courseSets: string[][] = [];
+  for (const [week, sessions] of weekly) {
+    const coursesThisWeek = [...new Set(sessions.map((session) => session.courseId))].sort();
+    courseSets[week] = coursesThisWeek;
+    assert.equal(coursesThisWeek.length, maximumCoverage);
+    assert.ok(sessions.reduce((total, session) => total + session.duration, 0) <= first.weeklyCapacityMinutes);
+    for (const courseId of coursesThisWeek) courseCounts.set(courseId, (courseCounts.get(courseId) ?? 0) + 1);
+  }
+  assert.ok(courseSets.slice(1).every((set, index) => JSON.stringify(set) !== JSON.stringify(courseSets[index])));
+  assert.ok(Math.max(...courseCounts.values()) - Math.min(...courseCounts.values()) <= 1);
+  for (const left of first.sessions) for (const right of first.sessions) {
+    if (left.id === right.id || left.date !== right.date) continue;
+    assert.ok(left.endTime <= right.startTime || right.endTime <= left.startTime);
   }
 });
 
