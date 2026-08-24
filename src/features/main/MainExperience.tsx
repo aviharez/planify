@@ -76,23 +76,22 @@ const navigationItems = [
 
 function MainNavigation({ view }: { view: MainView }) {
   return (
-    <nav aria-label="Navigasi utama" className="fixed inset-x-3 bottom-[calc(1rem+env(safe-area-inset-bottom))] z-20 mx-auto max-w-3xl rounded-2xl border border-ink/10 bg-cream/95 p-2 shadow-soft backdrop-blur lg:inset-x-auto lg:bottom-[calc(1.5rem+env(safe-area-inset-bottom))] lg:left-1/2 lg:w-[min(44rem,calc(100vw-2rem))] lg:-translate-x-1/2 lg:rounded-[1.5rem] lg:border-cream/15 lg:bg-ink/90 lg:p-2.5 lg:shadow-[0_18px_60px_rgba(23,37,31,.28)] lg:backdrop-blur-xl">
-      <span aria-hidden="true" className="pointer-events-none absolute inset-x-16 -top-5 hidden h-10 rounded-full bg-moss/35 blur-2xl lg:block" />
-      <div className="relative grid min-w-0 grid-flow-dense grid-cols-5 gap-1 lg:gap-1.5">
+    <nav aria-label="Navigasi utama" className="fixed inset-x-3 bottom-[calc(1rem+env(safe-area-inset-bottom))] z-20 mx-auto max-w-md rounded-[1.25rem] border border-ink/10 bg-cream/95 p-1.5 shadow-[0_12px_30px_rgba(23,37,31,.16)] lg:inset-x-auto lg:bottom-[calc(1.5rem+env(safe-area-inset-bottom))] lg:left-1/2 lg:w-[min(39rem,calc(100vw-2rem))] lg:max-w-none lg:-translate-x-1/2 lg:rounded-[1.25rem] lg:border-ink/20 lg:bg-ink lg:p-1.5 lg:shadow-[0_18px_45px_rgba(23,37,31,.28)]">
+      <div className="grid min-w-0 grid-flow-dense grid-cols-4 gap-1 lg:gap-1.5">
         {navigationItems.map(({ key, label, mobileLabel, href, icon: Icon }) => (
-        <a
-          key={key}
-          href={href}
-          aria-label={label}
-          title={label}
-          className={`inline-flex min-h-11 min-w-0 flex-col items-center justify-center gap-1 rounded-xl px-1 py-1 text-[10px] font-semibold leading-none transition sm:px-2 sm:text-xs lg:flex-row lg:justify-center lg:gap-2 lg:px-3 lg:py-3 lg:text-sm lg:leading-normal lg:transition-[transform,background-color,color] lg:duration-200 lg:ease-out lg:hover:-translate-y-0.5 lg:hover:scale-[1.02] ${view === key ? "bg-moss text-cream lg:bg-cream lg:text-ink" : "text-ink/60 hover:bg-sage/60 hover:text-ink lg:text-cream/75 lg:hover:bg-cream/10 lg:hover:text-cream"}`}
-          aria-current={view === key ? "page" : undefined}
-        >
-          <Icon size={17} strokeWidth={2} aria-hidden="true" />
-          <span className="truncate lg:hidden">{mobileLabel}</span>
-          <span className="hidden lg:inline">{label}</span>
-        </a>
-      ))}
+          <a
+            key={key}
+            href={href}
+            aria-label={label}
+            title={label}
+            className={`relative inline-flex min-h-11 min-w-0 flex-col items-center justify-center gap-1 rounded-[0.9rem] px-1.5 py-1.5 text-[10px] font-semibold leading-none transition-colors focus-visible:z-10 sm:px-2 sm:text-xs lg:flex-row lg:justify-center lg:gap-2 lg:px-3 lg:py-2.5 lg:text-sm lg:leading-normal lg:motion-safe:transition-[transform,background-color,color] lg:motion-safe:duration-200 lg:motion-safe:ease-out lg:motion-safe:hover:-translate-y-0.5 lg:motion-safe:hover:scale-[1.02] ${view === key ? "bg-moss text-cream lg:bg-cream lg:text-ink" : "text-ink/70 hover:bg-sage/60 hover:text-ink lg:text-cream/70 lg:hover:bg-cream/10 lg:hover:text-cream"}`}
+            aria-current={view === key ? "page" : undefined}
+          >
+            <Icon size={18} strokeWidth={2} aria-hidden="true" />
+            <span className="truncate lg:hidden">{mobileLabel}</span>
+            <span className="hidden lg:inline">{label}</span>
+          </a>
+        ))}
       </div>
     </nav>
   );
