@@ -1,10 +1,12 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 import { initialOnboardingData, type OnboardingData } from "@/features/onboarding/types";
 import { onboardingDataSchema } from "@/features/onboarding/state";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createNewSemesterSetup, nextSemesterName } from "@/features/semester/lifecycle";
+import { resolvePlanAcknowledgement } from "@/features/onboarding/lifecycle";
 
 async function context() {
   const supabase = await createSupabaseServerClient();
@@ -13,22 +15,62 @@ async function context() {
   return { supabase, user: data.user };
 }
 
-export async function acknowledgePlanPreview(planId?: string) {
+const finalizationInputSchema = z.object({
+  planId: z.string().uuid(),
+  setup: z.unknown(),
+  acknowledge: z.boolean(),
+});
+
+/**
+ * Persists the complete pending setup during preparation. On acknowledgement,
+ * acknowledge the verified remote plan first, then write the setup; an explicit
+ * null remains pending if the second write fails.
+ */
+export async function finalizePlanPreview(input: unknown) {
+  const parsedInput = finalizationInputSchema.safeParse(input);
+  if (!parsedInput.success) return { ok: false as const, message: "Rencana belum siap disimpan." };
+  const setup = onboardingDataSchema.safeParse(parsedInput.data.setup);
+  if (!setup.success || !setup.data.planActive || !setup.data.studyPlan) {
+    return { ok: false as const, message: "Data rencana belum lengkap untuk disimpan." };
+  }
+  if (!parsedInput.data.acknowledge && setup.data.previewAcknowledgedAt !== null) {
+    return { ok: false as const, message: "Preview baru harus berstatus menunggu konfirmasi." };
+  }
   const { supabase, user } = await context();
-  if (!supabase || !user) return { ok: true as const, acknowledgedAt: new Date().toISOString() };
-  const acknowledgedAt = new Date().toISOString();
-  const { data: semester } = await supabase.from("semesters").select("id, setup_payload").eq("user_id", user.id).eq("is_active", true).order("updated_at", { ascending: false }).limit(1).maybeSingle();
+  if (!supabase || !user) return { ok: true as const, acknowledgedAt: parsedInput.data.acknowledge ? new Date().toISOString() : null };
+  const { data: semester } = await supabase.from("semesters").select("id").eq("user_id", user.id).eq("is_active", true).order("updated_at", { ascending: false }).limit(1).maybeSingle();
   if (!semester?.id) return { ok: false as const, message: "Semester aktif belum tersedia." };
-  let setup: OnboardingData | null = null;
-  const parsed = onboardingDataSchema.safeParse(semester.setup_payload);
-  if (parsed.success) setup = parsed.data as OnboardingData;
-  let query = supabase.from("study_plans").update({ preview_acknowledged_at: acknowledgedAt, updated_at: acknowledgedAt }).eq("user_id", user.id).eq("semester_id", semester.id).eq("status", "active");
-  if (planId) query = query.eq("id", planId);
-  const updated = await query;
-  if (updated.error) return { ok: false as const, message: "Preview belum berhasil disimpan." };
-  const payload = setup ? { ...setup, previewAcknowledgedAt: acknowledgedAt } : { ...(semester.setup_payload as Record<string, unknown>), previewAcknowledgedAt: acknowledgedAt };
-  const saved = await supabase.from("semesters").update({ setup_payload: payload, updated_at: acknowledgedAt }).eq("id", semester.id).eq("user_id", user.id);
-  if (saved.error) return { ok: false as const, message: "Status preview belum berhasil disimpan." };
+  const remotePlan = await supabase.from("study_plans").select("id, preview_acknowledged_at").eq("id", parsedInput.data.planId).eq("user_id", user.id).eq("semester_id", semester.id).eq("status", "active").maybeSingle();
+  if (remotePlan.error || !remotePlan.data?.id) return { ok: false as const, message: "Rencana remote belum tersedia. Coba simpan ulang." };
+
+  let acknowledgedAt: string | null = null;
+  if (parsedInput.data.acknowledge) {
+    acknowledgedAt = resolvePlanAcknowledgement(remotePlan.data.preview_acknowledged_at, new Date().toISOString());
+    if (!remotePlan.data.preview_acknowledged_at) {
+      const acknowledged = await supabase
+        .from("study_plans")
+        .update({ preview_acknowledged_at: acknowledgedAt, updated_at: acknowledgedAt })
+        .eq("id", remotePlan.data.id)
+        .eq("user_id", user.id)
+        .eq("semester_id", semester.id)
+        .eq("status", "active")
+        .is("preview_acknowledged_at", null)
+        .select("id")
+        .maybeSingle();
+      if (acknowledged.error || !acknowledged.data?.id) return { ok: false as const, message: "Preview belum berhasil disimpan. Coba lagi." };
+    }
+  }
+  const payload = parsedInput.data.acknowledge
+    ? { ...setup.data, previewAcknowledgedAt: acknowledgedAt }
+    : setup.data;
+  const saved = await supabase
+    .from("semesters")
+    .update({ setup_payload: payload, onboarding_step: payload.step, updated_at: new Date().toISOString() })
+    .eq("id", semester.id)
+    .eq("user_id", user.id)
+    .select("id")
+    .maybeSingle();
+  if (saved.error || !saved.data?.id) return { ok: false as const, message: "Data semester belum berhasil disimpan. Tetap di halaman ini dan coba lagi." };
   revalidatePath("/");
   revalidatePath("/hari-ini");
   return { ok: true as const, acknowledgedAt };

@@ -47,3 +47,65 @@ test("baris parsial tetap dikembalikan dan SKS berbeda tidak hilang", () => {
   assert.equal(result.candidates.length, 2);
   assert.ok(result.conflicts.some((item) => item.field === "credits"));
 });
+
+test("parser mengambil struktur baris dengan beragam kode dan tanpa kode", () => {
+  const result = parseKrsText([
+    "1. IF-028 Sistem Mikrokontroler 6 3 Approved (*T)",
+    "2. IF-U08 Pra Skripsi 7 3 Approved (*T)",
+    "3. IF-P02 Sistem Informasi Enterprise 5 3 Approved (*T)",
+    "4. TI-A01 Algoritma dan Struktur Data 3 3 Approved",
+    "5. SI-204 Analisis Sistem 4 3",
+    "6. AKT-P02 Akuntansi Keuangan 3 3",
+    "7. CS101 Introduction to Computing 3",
+    "8. Pemrograman Web 2 3 SKS",
+    "9. Kalkulus 2 3 SKS",
+  ].join("\n"));
+  assert.deepEqual(result.candidates.map(({ name, credits }) => ({ name, credits })), [
+    { name: "Sistem Mikrokontroler", credits: 3 },
+    { name: "Pra Skripsi", credits: 3 },
+    { name: "Sistem Informasi Enterprise", credits: 3 },
+    { name: "Algoritma dan Struktur Data", credits: 3 },
+    { name: "Analisis Sistem", credits: 3 },
+    { name: "Akuntansi Keuangan", credits: 3 },
+    { name: "Introduction to Computing", credits: 3 },
+    { name: "Pemrograman Web 2", credits: 3 },
+    { name: "Kalkulus 2", credits: 3 },
+  ]);
+});
+
+test("parser menggabungkan nama yang terbungkus dan menolak metadata", () => {
+  const result = parseKrsText("1. IF-A01 Project Integration\nMethodology of Excellence 5 3 Approved\nJumlah Mata Kuliah 1\n3 SKS");
+  assert.deepEqual(result.candidates.map((item) => item.name), ["Project Integration Methodology of Excellence"]);
+  assert.equal(result.candidates[0]?.credits, 3);
+});
+
+test("baris tanpa kode tetap memisahkan semester dan SKS", () => {
+  const result = parseKrsText("1. Kalkulus 2 4 3\n2. Basis Data 3 3");
+  assert.deepEqual(result.candidates.map(({ name, credits }) => ({ name, credits })), [
+    { name: "Kalkulus 2", credits: 3 },
+    { name: "Basis Data", credits: 3 },
+  ]);
+});
+
+test("angka di nama mata kuliah tidak dibuang saat SKS diberi label", () => {
+  const result = parseKrsText("1. Pemrograman Web 2 3 SKS\n2. Kalkulus 2 3 SKS");
+  assert.deepEqual(result.candidates.map((item) => item.name), ["Pemrograman Web 2", "Kalkulus 2"]);
+});
+
+test("normalisasi OCR typo tetap menghasilkan nama akademik yang terbaca", () => {
+  const result = parseKrsText("1. IF-027 Sistem Mikroprosessor 5 3 Approved");
+  assert.equal(result.candidates[0]?.name, "Sistem Mikroprosesor");
+});
+
+test("multiline side-by-side row splitting keeps the duplicated mobile course", () => {
+  const result = parseKrsText([
+    "No. Kode Mata Kuliah Semester SKS Status No. Kode Mata Kuliah Semester SKS Status",
+    "4. | oa | Pemrograman Mobile I 5 3 |Approved (T)| | 4. | IF-024 |Pemrograman Mobile ll 5 3 [Approved CT)",
+    "5 | 1F-027 Sistem Mikroprosessor 5 3 [Approved (T)| | 5. | IF-027 | Sistem Mikroprosessor 5 3 | Approved CT)",
+    "7 Mata Kuliah 22 SKS",
+  ].join("\n"));
+  assert.deepEqual(result.candidates.map((item) => `${item.name}|${item.credits}`), [
+    "Pemrograman Mobile II|3",
+    "Sistem Mikroprosesor|3",
+  ]);
+});

@@ -143,8 +143,8 @@ const onboardingDataObjectSchema = z.object({
     })),
     error: z.string().optional(),
   }).optional().default({
-    source: "manual",
-    status: "manual",
+    source: "ocr",
+    status: "pending",
     confidence: 0,
     needsVerification: false,
     conflicts: [],

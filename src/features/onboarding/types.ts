@@ -228,8 +228,8 @@ export const initialOnboardingData: OnboardingData = {
   academicEvents: [],
   planActive: false,
   krsExtraction: {
-    source: "manual",
-    status: "manual",
+    source: "ocr",
+    status: "pending",
     confidence: 0,
     needsVerification: false,
     conflicts: [],

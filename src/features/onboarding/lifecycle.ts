@@ -21,3 +21,16 @@ export function isActiveUse(data: Parameters<typeof resolveLifecycle>[0]) {
 export function canOpenMainExperience(data: Parameters<typeof resolveLifecycle>[0]) {
   return isActiveUse(data);
 }
+
+/** Preserve an explicit pending preview; only legacy payloads may inherit remote acknowledgement. */
+export function resolvePreviewAcknowledgement(
+  persisted: string | null | undefined,
+  remote: string | null | undefined,
+) {
+  return persisted === undefined ? remote : persisted;
+}
+
+/** Reuse an existing remote acknowledgement so a retry can finish setup persistence. */
+export function resolvePlanAcknowledgement(current: string | null | undefined, now: string) {
+  return current ?? now;
+}

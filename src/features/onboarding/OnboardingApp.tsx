@@ -50,8 +50,8 @@ import {
   onboardingDataSchema,
   previousStep,
 } from "./state";
-import { resolveLifecycle } from "./lifecycle";
-import { acknowledgePlanPreview } from "@/app/actions/lifecycle";
+import { resolveLifecycle, resolvePreviewAcknowledgement } from "./lifecycle";
+import { finalizePlanPreview } from "@/app/actions/lifecycle";
 import CalendarView from "@/features/calendar/CalendarView";
 import { calendarRangeForPlan, combineCalendarEvents } from "@/features/calendar/transform";
 import {
@@ -701,7 +701,7 @@ function KrsStep({
       setWarning(
         extraction.candidates.length
           ? storage.warning ?? ""
-          : "Belum ada baris mata kuliah yang dapat dipastikan. Periksa berkas atau isi mata kuliah secara manual.",
+          : "Belum ada baris mata kuliah yang dapat dipastikan. Periksa berkas dan coba unggah ulang dengan gambar yang lebih jelas.",
       );
       update({
         courses,
@@ -735,29 +735,8 @@ function KrsStep({
           error: "Dokumen belum berhasil dibaca.",
         },
       });
-      setError("KRS belum berhasil dibaca. Coba unggah berkas yang lebih jelas atau isi mata kuliah secara manual.");
+      setError("KRS belum berhasil dibaca. Coba unggah berkas yang lebih jelas.");
     }
-  }
-
-  function useManual() {
-    setError("");
-    update({
-      krsFileName: "KRS diisi manual",
-      krsFileType: "manual",
-      krsFileSize: 0,
-      krsUploadedAt: new Date().toISOString(),
-      krsExtraction: {
-        source: "manual",
-        status: "manual",
-        confidence: 1,
-        needsVerification: true,
-        conflicts: [],
-      },
-      courses: data.courses.length
-        ? data.courses
-        : [{ id: uid("course"), name: "", credits: 3 }],
-    });
-    setStage(3);
   }
 
   return (
@@ -803,14 +782,6 @@ function KrsStep({
               Unggah KRS
             </button>
           </div>
-          <button
-            type="button"
-            onClick={useManual}
-            className="mt-3 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-dashed border-ink/25 px-4 text-sm font-semibold text-moss hover:border-moss hover:bg-sage/30"
-          >
-            <Pencil size={16} />
-            Isi mata kuliah secara manual
-          </button>
           <div className="mt-4 flex flex-wrap gap-2 text-xs text-ink/55">
             <span className="rounded-full bg-sage/60 px-3 py-1.5">
               Ambil Foto
@@ -848,7 +819,7 @@ function KrsStep({
                   <p className="text-xs text-ink/55">
                     {data.krsFileSize
                       ? `${(data.krsFileSize / 1024).toFixed(0)} KB`
-                      : "Isi manual"}{" "}
+                      : "Berkas KRS"} {" "}
                     · hasil baca siap diperiksa
                   </p>
                 </div>
@@ -914,8 +885,7 @@ function KrsStep({
             Mulai dari data yang sudah kamu punya.
           </h2>
           <p className="mt-6 max-w-sm text-sm leading-6 text-cream/70">
-            Kamu bisa memeriksa hasil baca, mengubahnya, atau beralih ke isian
-            manual kapan saja.
+            Kamu bisa memeriksa hasil baca, mengubahnya, menghapus baris yang keliru, atau menambahkan mata kuliah yang terlewat.
           </p>
           <div className="mt-10 flex items-center gap-3 text-sm text-cream/70">
             <div className="grid h-10 w-10 place-items-center rounded-full bg-cream/10">
@@ -1935,11 +1905,13 @@ function PlanReady({
   onReview,
   onAcknowledge,
   warning,
+  canAcknowledge,
 }: {
   data: OnboardingData;
   onReview: () => void;
   onAcknowledge: () => void;
   warning?: string;
+  canAcknowledge: boolean;
 }) {
   const totalCredits = data.courses.reduce(
     (sum, course) => sum + course.credits,
@@ -1994,9 +1966,10 @@ function PlanReady({
         <button
           type="button"
           onClick={onAcknowledge}
-          className="flex min-h-13 flex-1 items-center justify-center gap-2 rounded-xl bg-moss px-5 py-3 font-semibold text-cream transition hover:bg-ink"
+          disabled={!canAcknowledge}
+          className="flex min-h-13 flex-1 items-center justify-center gap-2 rounded-xl bg-moss px-5 py-3 font-semibold text-cream transition hover:bg-ink disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Mulai Gunakan Rencana
+          {canAcknowledge ? "Mulai Gunakan Rencana" : "Menunggu penyimpanan..."}
           <ArrowRight size={17} />
         </button>
         <button
@@ -2050,7 +2023,7 @@ export default function OnboardingApp() {
     "idle" | "processing" | "ready"
   >("idle");
   const [generationWarning, setGenerationWarning] = useState("");
-  const [savedNotice, setSavedNotice] = useState(false);
+  const [persistenceReady, setPersistenceReady] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
   const [remoteReady, setRemoteReady] = useState(false);
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
@@ -2101,7 +2074,7 @@ export default function OnboardingApp() {
         : { data: null };
       if (!cancelled) {
         const nextData = remoteSetup
-          ? { ...remoteSetup, timezone, previewAcknowledgedAt: remoteSetup.previewAcknowledgedAt ?? remotePlan?.preview_acknowledged_at ?? undefined, planActive: Boolean(remoteSetup.planActive && remoteSetup.studyPlan) }
+          ? { ...remoteSetup, timezone, previewAcknowledgedAt: resolvePreviewAcknowledgement(remoteSetup.previewAcknowledgedAt, remotePlan?.preview_acknowledged_at), planActive: Boolean(remoteSetup.planActive && remoteSetup.studyPlan) }
           : { ...initialOnboardingData, timezone };
         if (resolveLifecycle(nextData) === "active-use") {
           window.location.replace("/hari-ini");
@@ -2109,6 +2082,7 @@ export default function OnboardingApp() {
         }
         setData(nextData);
         setGenerationReady(Boolean(nextData.planActive && nextData.studyPlan));
+        setPersistenceReady(Boolean(nextData.planActive && nextData.studyPlan?.remoteId));
         setAuthenticated(true);
         setRemoteReady(true);
         setHydrated(true);
@@ -2127,31 +2101,18 @@ export default function OnboardingApp() {
 
   useEffect(() => {
     if (!hydrated || !remoteReady || !supabase || !authenticated) return;
-    void supabase.auth.getUser().then(async ({ data: authData }) => {
+    void supabase.auth.getUser().then(({ data: authData }) => {
       if (!authData.user) return;
-      await supabase.from("profiles").upsert({
+      void supabase.from("profiles").upsert({
         id: authData.user.id,
         timezone: data.timezone,
         updated_at: new Date().toISOString(),
       });
-      await supabase.from("semesters").upsert(
-        {
-          user_id: authData.user.id,
-          name: data.semester,
-          onboarding_step: data.step,
-          setup_payload: data,
-          is_active: true,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "user_id,name" },
-      );
     });
-  }, [data, hydrated, remoteReady, authenticated, supabase]);
+  }, [data.timezone, hydrated, remoteReady, authenticated, supabase]);
 
   const update = (patch: Partial<OnboardingData>) => {
     setData((current) => ({ ...current, ...patch }));
-    setSavedNotice(true);
-    window.setTimeout(() => setSavedNotice(false), 1200);
   };
   const resumeAuthenticated = async () => {
     if (!supabase) return;
@@ -2178,7 +2139,7 @@ export default function OnboardingApp() {
       ? await supabase.from("study_plans").select("id, preview_acknowledged_at").eq("user_id", authData.user.id).eq("semester_id", semester.id).eq("status", "active").order("generated_at", { ascending: false }).limit(1).maybeSingle()
       : { data: null };
     const nextData = remoteSetup
-      ? { ...remoteSetup, timezone, previewAcknowledgedAt: remoteSetup.previewAcknowledgedAt ?? remotePlan?.preview_acknowledged_at ?? undefined, planActive: Boolean(remoteSetup.planActive && remoteSetup.studyPlan) }
+      ? { ...remoteSetup, timezone, previewAcknowledgedAt: resolvePreviewAcknowledgement(remoteSetup.previewAcknowledgedAt, remotePlan?.preview_acknowledged_at), planActive: Boolean(remoteSetup.planActive && remoteSetup.studyPlan) }
       : { ...initialOnboardingData, timezone };
     if (resolveLifecycle(nextData) === "active-use") {
       window.location.replace("/hari-ini");
@@ -2189,22 +2150,26 @@ export default function OnboardingApp() {
     );
     setAuthenticated(true);
     setGenerationReady(Boolean(nextData.planActive && nextData.studyPlan));
+    setPersistenceReady(Boolean(nextData.planActive && nextData.studyPlan?.remoteId));
     setRemoteReady(true);
   };
   const logout = async () => {
     if (supabase) await supabase.auth.signOut();
     setAuthenticated(false);
     setGenerationReady(false);
+    setPersistenceReady(false);
     window.location.replace("/");
   };
   const moveNext = () => setData((current) => nextStep(current));
   const moveBack = () => setData((current) => previousStep(current));
   const editStep = (step: number) => {
     setGenerationReady(false);
+    setPersistenceReady(false);
     setData((current) => jumpToStep(current, step));
   };
   const reviewSummary = () => {
     setGenerationReady(false);
+    setPersistenceReady(false);
     setGenerationStatus("idle");
     setGenerationWarning("");
     setData((current) => ({ ...current, step: 5, planActive: false }));
@@ -2212,9 +2177,10 @@ export default function OnboardingApp() {
   const generatePlan = async () => {
     setGenerationWarning("");
     setGenerationStatus("processing");
+    setPersistenceReady(false);
     const today = dateInTimeZone(new Date(), data.timezone);
     const snapshot = buildPlanningSnapshot(data, { today });
-  const generatedPlan = generateStudyPlan({
+    const generatedPlan = generateStudyPlan({
       courses: data.courses,
       availability: data.availability,
       classSchedules: data.classSchedules,
@@ -2233,6 +2199,7 @@ export default function OnboardingApp() {
         fallbackEnrichments(generatedPlan.sessions),
       ),
     };
+    let persistedPlan = plan;
     setData((current) => ({
       ...current,
       planActive: true,
@@ -2241,59 +2208,85 @@ export default function OnboardingApp() {
       studyPlan: plan,
     }));
     let warning = "";
+    let remotePlanId: string | undefined;
+    let persisted = !authenticated;
+    setPersistenceReady(!authenticated);
     if (authenticated && supabase) {
       try {
         const snapshotWarning = await storePlanningSnapshot(supabase, snapshot);
-        const storedPlan = await storeStudyPlan(supabase, plan);
-        warning = snapshotWarning || storedPlan.warning;
-        if (storedPlan.remoteId) {
-          setData((current) => ({
-            ...current,
-            studyPlan: current.studyPlan
-              ? { ...current.studyPlan, remoteId: storedPlan.remoteId }
-              : current.studyPlan,
-          }));
-          try {
-            const response = await fetch("/api/ai/enrich", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                planId: storedPlan.remoteId,
-                sessions: plan.sessions.map((session) => ({
-                  sessionKey: session.sessionKey,
-                  courseName: session.courseName,
-                  date: session.date,
-                  duration: session.duration,
-                  priorityScore: session.prioritySnapshot.score,
-                  knowledgeGap: session.prioritySnapshot.knowledgeGap,
-                  difficulty: session.prioritySnapshot.difficulty,
-                  urgency: session.prioritySnapshot.urgency,
-                })),
-              }),
-            });
-            if (response.ok) {
-              const body = (await response.json()) as unknown;
-              const enrichment = enrichStudySessionsResultSchema.safeParse(body);
-              if (enrichment.success) {
-                const enrichedSessions = applyEnrichments(plan.sessions, enrichment.data);
-                setData((current) => ({
-                  ...current,
-                  studyPlan: current.studyPlan
-                    ? { ...current.studyPlan, sessions: enrichedSessions }
-                    : current.studyPlan,
-                }));
+        if (snapshotWarning) {
+          warning = snapshotWarning;
+        } else {
+          const storedPlan = await storeStudyPlan(supabase, plan);
+          warning = storedPlan.warning;
+          remotePlanId = storedPlan.remoteId;
+          if (remotePlanId) {
+            persistedPlan = { ...persistedPlan, remoteId: remotePlanId };
+            setData((current) => ({
+              ...current,
+              studyPlan: current.studyPlan
+                ? { ...current.studyPlan, remoteId: remotePlanId }
+                : current.studyPlan,
+            }));
+            try {
+              const response = await fetch("/api/ai/enrich", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  planId: remotePlanId,
+                  sessions: plan.sessions.map((session) => ({
+                    sessionKey: session.sessionKey,
+                    courseName: session.courseName,
+                    date: session.date,
+                    duration: session.duration,
+                    priorityScore: session.prioritySnapshot.score,
+                    knowledgeGap: session.prioritySnapshot.knowledgeGap,
+                    difficulty: session.prioritySnapshot.difficulty,
+                    urgency: session.prioritySnapshot.urgency,
+                  })),
+                }),
+              });
+              if (response.ok) {
+                const body = (await response.json()) as unknown;
+                const enrichment = enrichStudySessionsResultSchema.safeParse(body);
+                if (enrichment.success) {
+                  const enrichedSessions = applyEnrichments(persistedPlan.sessions, enrichment.data);
+                  persistedPlan = { ...persistedPlan, sessions: enrichedSessions };
+                  setData((current) => ({
+                    ...current,
+                    studyPlan: current.studyPlan
+                      ? { ...current.studyPlan, sessions: enrichedSessions }
+                      : current.studyPlan,
+                  }));
+                }
+                if ((body as { fallback?: boolean }).fallback)
+                  warning = "Strategi belajar bawaan digunakan. Rencana tetap siap dipakai.";
               }
-              if ((body as { fallback?: boolean }).fallback)
-                warning = "Strategi belajar bawaan digunakan. Rencana tetap siap dipakai.";
+            } catch {
+              warning = "Strategi belajar AI belum tersedia. Rencana tetap siap dipakai dengan panduan bawaan.";
             }
-          } catch {
-            warning = "Strategi belajar AI belum tersedia. Rencana tetap siap dipakai dengan panduan bawaan.";
           }
         }
       } catch {
         warning = "Rencana tersusun, tetapi belum berhasil disimpan ke akun. Data lokal tetap aman.";
       }
+      if (remotePlanId) {
+        const finalized = await finalizePlanPreview({
+          planId: remotePlanId,
+          acknowledge: false,
+          setup: {
+            ...data,
+            planActive: true,
+            previewAcknowledgedAt: null,
+            planningSnapshot: snapshot,
+            studyPlan: persistedPlan,
+          },
+        });
+        if (!finalized.ok) warning = finalized.message;
+        else persisted = true;
+      }
     }
+    setPersistenceReady(persisted);
     setGenerationWarning(
       warning ||
         (!authenticated
@@ -2304,13 +2297,21 @@ export default function OnboardingApp() {
     setGenerationReady(true);
   };
   const acknowledgePreview = async () => {
-    const acknowledgedAt = new Date().toISOString();
-    const result = await acknowledgePlanPreview(data.studyPlan?.remoteId);
+    const planId = data.studyPlan?.remoteId;
+    if (!authenticated || !persistenceReady || !planId) {
+      setGenerationWarning("Rencana belum tersimpan lengkap. Tinjau lagi lalu coba simpan ulang.");
+      return;
+    }
+    const result = await finalizePlanPreview({
+      planId,
+      acknowledge: true,
+      setup: { ...data, previewAcknowledgedAt: null },
+    });
     if (!result.ok) {
       setGenerationWarning(result.message);
       return;
     }
-    const setup = { ...data, previewAcknowledgedAt: result.acknowledgedAt ?? acknowledgedAt };
+    const setup = { ...data, previewAcknowledgedAt: result.acknowledgedAt };
     setData(setup);
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(setup));
     window.location.replace("/hari-ini");
@@ -2345,7 +2346,7 @@ export default function OnboardingApp() {
         </div>
       </main>
     );
-  if (generationReady || Boolean(data.planActive && data.studyPlan))
+  if (generationReady && Boolean(data.planActive && data.studyPlan))
     return (
       <main className="grain relative min-h-screen overflow-x-hidden px-5 py-8 sm:px-10 sm:py-12">
         <MotionLayer />
@@ -2375,7 +2376,7 @@ export default function OnboardingApp() {
             </div>
           </header>
           <div className="mt-16">
-            <PlanReady data={data} onReview={reviewSummary} onAcknowledge={() => void acknowledgePreview()} warning={generationWarning} />
+            <PlanReady data={data} onReview={reviewSummary} onAcknowledge={() => void acknowledgePreview()} warning={generationWarning} canAcknowledge={persistenceReady} />
           </div>
         </div>
       </main>
@@ -2508,9 +2509,7 @@ export default function OnboardingApp() {
               </button>
               <div className="flex items-center justify-between gap-3 sm:justify-end">
                 <span role="status" className="text-xs text-ink/50">
-                  {savedNotice
-                    ? "Tersimpan"
-                    : "Perubahan tersimpan di perangkat"}
+                  Perubahan tersimpan di perangkat
                 </span>
                 <button
                   type="button"

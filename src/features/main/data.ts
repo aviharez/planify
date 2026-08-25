@@ -2,7 +2,7 @@ import { z } from "zod";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { onboardingDataSchema } from "@/features/onboarding/state";
 import type { OnboardingData, StudyPlan, StudySession } from "@/features/onboarding/types";
-import { canOpenMainExperience } from "@/features/onboarding/lifecycle";
+import { canOpenMainExperience, resolvePreviewAcknowledgement } from "@/features/onboarding/lifecycle";
 
 export const ONBOARDING_STORAGE_KEY = "planify:onboarding:v1";
 
@@ -66,7 +66,7 @@ export async function loadMainData(supabase = createSupabaseBrowserClient()): Pr
     .order("generated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  const previewAcknowledgedAt = setup.previewAcknowledgedAt ?? remotePlan?.preview_acknowledged_at ?? undefined;
+  const previewAcknowledgedAt = resolvePreviewAcknowledgement(setup.previewAcknowledgedAt, remotePlan?.preview_acknowledged_at);
   const hydratedSetup = { ...setup, previewAcknowledgedAt };
   if (!canOpenMainExperience(hydratedSetup)) return null;
   if (!remotePlan?.id) return { setup: hydratedSetup, authenticated: true };
