@@ -97,6 +97,8 @@ const planSchema = z.object({
 
 const onboardingDataObjectSchema = z.object({
   step: z.number().int().min(0).max(5),
+  semesterId: z.string().uuid().optional(),
+  semesterStartedAt: z.string().min(1).optional(),
   timezone: z.string().min(1),
   krsFileName: z.string(),
   krsFileType: z.string(),

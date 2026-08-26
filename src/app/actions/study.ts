@@ -16,14 +16,33 @@ export async function updateStudySession(input: unknown) {
   if (!supabase) return { ok: false, message: "Layanan akun belum tersedia." };
   const { data: authData } = await supabase.auth.getUser();
   if (!authData.user) return { ok: false, message: "Kamu perlu masuk terlebih dahulu." };
+  const { data: activeSemester } = await supabase
+    .from("semesters")
+    .select("id")
+    .eq("user_id", authData.user.id)
+    .eq("is_active", true)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!activeSemester?.id) return { ok: false, message: "Semester aktif belum tersedia." };
+  const { data: activePlan } = await supabase
+    .from("study_plans")
+    .select("id, semester_id")
+    .eq("id", parsed.data.planId)
+    .eq("user_id", authData.user.id)
+    .eq("semester_id", activeSemester.id)
+    .eq("status", "active")
+    .maybeSingle();
+  if (!activePlan?.id || activePlan.semester_id !== activeSemester.id) return { ok: false, message: "Rencana aktif tidak ditemukan." };
   const { data: session } = await supabase
     .from("study_sessions")
-    .select("id, status")
-    .eq("study_plan_id", parsed.data.planId)
+    .select("id, status, semester_id, study_plan_id")
+    .eq("study_plan_id", activePlan.id)
+    .eq("semester_id", activeSemester.id)
     .eq("session_key", parsed.data.sessionKey)
     .eq("user_id", authData.user.id)
     .maybeSingle();
-  if (!session) return { ok: false, message: "Sesi tidak ditemukan." };
+  if (!session || session.study_plan_id !== activePlan.id || session.semester_id !== activeSemester.id) return { ok: false, message: "Sesi tidak ditemukan." };
   const currentStatus = session.status as StudySessionStatus;
   if (!canTransitionSession(currentStatus, parsed.data.status))
     return { ok: false, message: "Sesi yang sudah tercatat tidak dapat diubah lagi." };

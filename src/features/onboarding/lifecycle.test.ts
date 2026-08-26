@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { initialOnboardingData, type OnboardingData } from "./types";
-import { canOpenMainExperience, resolveLifecycle, resolvePlanAcknowledgement, resolvePreviewAcknowledgement } from "./lifecycle";
+import { canOpenMainExperience, resolveLifecycle, resolvePlanAcknowledgement, resolvePreviewAcknowledgement, validatePlanCourseOwnership } from "./lifecycle";
 import { createNewSemesterSetup } from "@/features/semester/lifecycle";
 
 function setup(patch: Partial<OnboardingData>): OnboardingData {
@@ -54,6 +54,12 @@ test("explicit pending acknowledgement never inherits remote acknowledgement", (
 test("acknowledgement retry reuses the existing remote timestamp", () => {
   assert.equal(resolvePlanAcknowledgement(null, "2026-08-24T00:00:00.000Z"), "2026-08-24T00:00:00.000Z");
   assert.equal(resolvePlanAcknowledgement("2026-08-23T00:00:00.000Z", "2026-08-24T00:00:00.000Z"), "2026-08-23T00:00:00.000Z");
+});
+
+test("ownership rencana menolak sesi dan faktor dari semester lain", () => {
+  const current = setup({ planningSnapshot: { reason: "initial", generatedAt: "now", planningPeriod: { start: "2026-08-26", end: "2026-09-22" }, weights: { academicLoad: 0.2, knowledgeGap: 0.2, difficulty: 0.2, urgency: 0.2, adaptation: 0.2 }, courseFactors: [{ courseId: "old", name: "Lama", factors: { academicLoad: 0, knowledgeGap: 0, difficulty: 0, urgency: 0, adaptation: 0 }, score: 0 }], availability: [] } });
+  const plan = { prioritySnapshot: { courseFactors: [{ courseId: "current", name: "Kini", factors: { academicLoad: 0, knowledgeGap: 0, difficulty: 0, urgency: 0, adaptation: 0 }, score: 0 }] }, sessions: [{ courseId: "current" }] } as unknown as NonNullable<OnboardingData["studyPlan"]>;
+  assert.deepEqual(validatePlanCourseOwnership({ courses: [{ id: "current", name: "Kini", credits: 3 }], planningSnapshot: current.planningSnapshot }, plan), { ok: false, courseIds: ["old"] });
 });
 
 test("setup semester baru yang sudah diakui tetap memuat data plan", () => {

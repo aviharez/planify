@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { onboardingDataSchema } from "@/features/onboarding/state";
 import { resolveSourceSessionId, weeklyEvaluationSchema } from "@/features/planning/adaptation";
+import { validatePlanCourseOwnership } from "@/features/onboarding/lifecycle";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -132,13 +133,15 @@ export async function persistAdaptedPlan(input: unknown): Promise<ActionResult> 
   if (!user) return { ok: false, message: "Kamu perlu masuk terlebih dahulu." };
   const { data: activeSemester } = await supabase
     .from("semesters")
-    .select("id")
+    .select("id, setup_payload")
     .eq("user_id", user.id)
     .eq("is_active", true)
     .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
   if (!activeSemester?.id) return { ok: false, message: "Semester aktif belum tersedia." };
+  const setup = onboardingDataSchema.safeParse(activeSemester.setup_payload);
+  if (!setup.success || !setup.data.planActive || (setup.data.semesterId && setup.data.semesterId !== activeSemester.id)) return { ok: false, message: "Rencana belajar aktif belum tersedia." };
   const { data: source } = await supabase
     .from("study_plans")
     .select("id, semester_id")
@@ -148,67 +151,36 @@ export async function persistAdaptedPlan(input: unknown): Promise<ActionResult> 
     .eq("status", "active")
     .maybeSingle();
   if (!source) return { ok: false, message: "Rencana aktif tidak ditemukan." };
+  const ownership = validatePlanCourseOwnership(setup.data, parsed.data.plan);
+  if (!ownership.ok) return { ok: false, message: `Perubahan rencana memuat mata kuliah yang bukan bagian dari semester aktif: ${ownership.courseIds.join(", ")}.` };
   const { data: sourceSessions } = await supabase
     .from("study_sessions")
     .select("id, session_key")
     .eq("study_plan_id", source.id)
+    .eq("semester_id", activeSemester.id)
     .eq("user_id", user.id);
-  const inserted = await supabase
-    .from("study_plans")
-    .insert({
-      user_id: user.id,
-      semester_id: source.semester_id,
-      status: "active",
-      source_plan_id: source.id,
-      adaptation_reason: parsed.data.plan.adaptationReason,
-      change_summary: parsed.data.plan.changeSummary,
-      priority_snapshot: parsed.data.plan.prioritySnapshot,
-      capacity_policy: parsed.data.plan.capacityPolicy,
-      weekly_capacity_minutes: parsed.data.plan.weeklyCapacityMinutes,
-      planning_period_start: parsed.data.plan.planningPeriod.start,
-      planning_period_end: parsed.data.plan.planningPeriod.end,
-      generated_at: parsed.data.plan.generatedAt,
-    })
-    .select("id")
-    .single();
-  if (inserted.error || !inserted.data?.id)
-    return { ok: false, message: "Perubahan rencana belum berhasil disimpan." };
-  const sessions = parsed.data.plan.sessions.map((session) => ({
-    study_plan_id: inserted.data.id,
-    user_id: user.id,
-    semester_id: source.semester_id,
-    course_key: session.courseId,
-    course_name: session.courseName,
-    session_key: session.sessionKey,
-    session_date: session.date,
-    start_time: session.startTime,
-    end_time: session.endTime,
-    duration_minutes: session.duration,
-    status: session.status,
-    priority_snapshot: session.prioritySnapshot,
-    study_method: session.studyMethod ?? null,
-    study_goal: session.studyGoal ?? null,
-    explanation: session.explanation ?? null,
-    completed_at: session.completedAt ?? null,
-    source_session_id: resolveSourceSessionId(sourceSessions ?? [], session.sourceSessionId, session.sessionKey),
-    change_reason: session.changeReason ?? null,
-  }));
-  const storedSessions = sessions.length ? await supabase.from("study_sessions").insert(sessions) : { error: null };
-  if (storedSessions.error) {
-    await supabase.from("study_plans").delete().eq("id", inserted.data.id).eq("user_id", user.id);
-    return { ok: false, message: "Perubahan rencana belum berhasil menyimpan semua sesi." };
-  }
-  const archived = await supabase
-    .from("study_plans")
-    .update({ status: "archived", updated_at: new Date().toISOString() })
-    .eq("id", source.id)
-    .eq("user_id", user.id);
-  if (archived.error) {
-    await supabase.from("study_plans").delete().eq("id", inserted.data.id).eq("user_id", user.id);
-    return { ok: false, message: "Perubahan rencana belum berhasil mengarsipkan rencana lama." };
-  }
+  const persistedPlan = {
+    ...parsed.data.plan,
+    sessions: parsed.data.plan.sessions.map((session) => ({
+      ...session,
+      sourceSessionId: resolveSourceSessionId(sourceSessions ?? [], session.sourceSessionId, session.sessionKey) ?? undefined,
+    })),
+  };
+  const stored = await supabase.rpc("replace_active_study_plan", {
+    p_semester_id: activeSemester.id,
+    p_plan: persistedPlan,
+    p_setup_payload: {
+      ...setup.data,
+      planningSnapshot: persistedPlan.prioritySnapshot,
+      studyPlan: persistedPlan,
+      planActive: true,
+    },
+    p_source_plan_id: source.id,
+  });
+  if (stored.error || !stored.data)
+    return { ok: false, message: "Perubahan rencana belum berhasil disimpan secara utuh." };
   revalidatePath("/hari-ini");
   revalidatePath("/rencana");
   revalidatePath("/mata-kuliah");
-  return { ok: true, message: "Rencanamu diperbarui.", remotePlanId: inserted.data.id };
+  return { ok: true, message: "Rencanamu diperbarui.", remotePlanId: stored.data };
 }

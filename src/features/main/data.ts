@@ -2,12 +2,14 @@ import { z } from "zod";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import { onboardingDataSchema } from "@/features/onboarding/state";
 import type { OnboardingData, StudyPlan, StudySession } from "@/features/onboarding/types";
-import { canOpenMainExperience, resolvePreviewAcknowledgement } from "@/features/onboarding/lifecycle";
+import { canOpenMainExperience, resolvePreviewAcknowledgement, validatePlanCourseOwnership } from "@/features/onboarding/lifecycle";
 
 export const ONBOARDING_STORAGE_KEY = "planify:onboarding:v1";
 
 const remoteSessionSchema = z.object({
   id: z.string(),
+  study_plan_id: z.string().uuid(),
+  semester_id: z.string().uuid(),
   session_key: z.string(),
   course_key: z.string(),
   course_name: z.string(),
@@ -35,6 +37,7 @@ const remoteSessionSchema = z.object({
 export type MainData = {
   setup: OnboardingData;
   authenticated: boolean;
+  semesterId: string;
   remotePlanId?: string;
 };
 
@@ -57,6 +60,7 @@ export async function loadMainData(supabase = createSupabaseBrowserClient()): Pr
     return null;
   }
   if (!setup.planActive || !setup.studyPlan || !semester?.id) return null;
+  if (setup.semesterId && setup.semesterId !== semester.id) return null;
   const { data: remotePlan } = await supabase
     .from("study_plans")
     .select("id, semester_id, planning_period_start, planning_period_end, weekly_capacity_minutes, capacity_policy, priority_snapshot, generated_at, source_plan_id, adaptation_reason, change_summary, preview_acknowledged_at")
@@ -66,20 +70,21 @@ export async function loadMainData(supabase = createSupabaseBrowserClient()): Pr
     .order("generated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  const previewAcknowledgedAt = resolvePreviewAcknowledgement(setup.previewAcknowledgedAt, remotePlan?.preview_acknowledged_at);
-  const hydratedSetup = { ...setup, previewAcknowledgedAt };
+  if (!remotePlan?.id || remotePlan.semester_id !== semester.id) return null;
+  const previewAcknowledgedAt = resolvePreviewAcknowledgement(setup.previewAcknowledgedAt, remotePlan.preview_acknowledged_at);
+  const hydratedSetup = { ...setup, semesterId: semester.id, previewAcknowledgedAt };
   if (!canOpenMainExperience(hydratedSetup)) return null;
-  if (!remotePlan?.id) return { setup: hydratedSetup, authenticated: true };
-  const { data: remoteSessions } = await supabase
+  const { data: remoteSessions, error: remoteSessionsError } = await supabase
     .from("study_sessions")
-    .select("id, session_key, course_key, course_name, session_date, start_time, end_time, duration_minutes, status, priority_snapshot, study_method, study_goal, explanation, completed_at, source_session_id, change_reason")
+    .select("id, study_plan_id, semester_id, session_key, course_key, course_name, session_date, start_time, end_time, duration_minutes, status, priority_snapshot, study_method, study_goal, explanation, completed_at, source_session_id, change_reason")
     .eq("study_plan_id", remotePlan.id)
+    .eq("semester_id", semester.id)
     .eq("user_id", authData.user.id)
     .order("session_date", { ascending: true })
     .order("start_time", { ascending: true });
+  if (remoteSessionsError) return null;
   const parsedSessions = z.array(remoteSessionSchema).safeParse(remoteSessions ?? []);
-  if (!parsedSessions.success || parsedSessions.data.length === 0)
-    return { setup: { ...hydratedSetup, studyPlan: { ...setup.studyPlan, remoteId: remotePlan.id } }, authenticated: true, remotePlanId: remotePlan.id };
+  if (!parsedSessions.success || parsedSessions.data.some((session) => session.study_plan_id !== remotePlan.id || session.semester_id !== semester.id)) return null;
   const { data: remoteFeedback } = await supabase
     .from("session_feedback")
     .select("study_session_id, reason, understanding, recorded_at")
@@ -114,8 +119,16 @@ export async function loadMainData(supabase = createSupabaseBrowserClient()): Pr
     changeReason: session.change_reason ?? undefined,
     feedback: feedbackBySession.get(session.id),
   }));
+  const prioritySnapshot = z.object({
+    reason: z.enum(["initial", "adaptation"]),
+    generatedAt: z.string(),
+    planningPeriod: z.object({ start: z.string(), end: z.string() }),
+    weights: z.object({ academicLoad: z.number(), knowledgeGap: z.number(), difficulty: z.number(), urgency: z.number(), adaptation: z.number() }),
+    courseFactors: z.array(z.object({ courseId: z.string(), name: z.string(), factors: z.object({ academicLoad: z.number(), knowledgeGap: z.number(), difficulty: z.number(), urgency: z.number(), adaptation: z.number() }), score: z.number() })),
+    availability: z.array(z.object({ id: z.string(), day: z.string(), start: z.string(), end: z.string() })),
+  }).safeParse(remotePlan.priority_snapshot);
+  if (!prioritySnapshot.success) return null;
   const studyPlan: StudyPlan = {
-    ...setup.studyPlan,
     id: setup.studyPlan.id,
     remoteId: remotePlan.id,
     generatedAt: remotePlan.generated_at,
@@ -125,13 +138,15 @@ export async function loadMainData(supabase = createSupabaseBrowserClient()): Pr
     },
     weeklyCapacityMinutes: remotePlan.weekly_capacity_minutes,
     capacityPolicy: remotePlan.capacity_policy as StudyPlan["capacityPolicy"],
-    prioritySnapshot: remotePlan.priority_snapshot as StudyPlan["prioritySnapshot"],
+    prioritySnapshot: prioritySnapshot.data as StudyPlan["prioritySnapshot"],
     sourcePlanId: remotePlan.source_plan_id ?? undefined,
     adaptationReason: remotePlan.adaptation_reason ?? undefined,
     changeSummary: Array.isArray(remotePlan.change_summary) ? remotePlan.change_summary as StudyPlan["changeSummary"] : undefined,
     sessions,
   };
-  return { setup: { ...hydratedSetup, studyPlan }, authenticated: true, remotePlanId: remotePlan.id };
+  const ownership = validatePlanCourseOwnership({ courses: hydratedSetup.courses, planningSnapshot: hydratedSetup.planningSnapshot }, studyPlan);
+  if (!ownership.ok) return null;
+  return { setup: { ...hydratedSetup, studyPlan }, authenticated: true, semesterId: semester.id, remotePlanId: remotePlan.id };
 }
 
 export function saveLocalMainData(setup: OnboardingData) {

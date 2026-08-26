@@ -142,6 +142,10 @@ export type ManagedEventTarget = {
 
 export type ManagedEventRemoval = "deleted" | "missing" | "unmanaged" | "not-future";
 
+export function isReconciledManagedEvent(outcome: ManagedEventRemoval) {
+  return outcome === "deleted" || outcome === "missing";
+}
+
 /** Deletes only a verified Planify event that has not ended in the user's local time. */
 export async function removeManagedFutureEvent(
   provider: Pick<GoogleCalendarProvider, "get" | "delete">,

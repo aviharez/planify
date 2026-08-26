@@ -5,6 +5,7 @@ import {
   GoogleCalendarProvider,
   deterministicCalendarEventId,
   isFutureLocalSession,
+  isReconciledManagedEvent,
   mapStudySessionToCalendarEvent,
   removeManagedFutureEvent,
   syncManagedEvents,
@@ -137,6 +138,18 @@ test("remove helper hanya menghapus event milik Planify yang masih akan datang",
   const deleted = await removeManagedFutureEvent({ get: async () => owned("s-1"), delete: async () => { calls.push("delete-owned"); } }, target, timing);
   assert.equal(deleted, "deleted");
   assert.equal(calls.at(-1), "delete-owned");
+});
+
+test("link lokal dibersihkan hanya setelah event terhapus atau terverifikasi sudah hilang", async () => {
+  const missing = await removeManagedFutureEvent({
+    get: async () => { throw new CalendarProviderError(404, "missing"); },
+    delete: async () => { throw new Error("delete tidak boleh dipanggil"); },
+  }, { googleCalendarId: "primary", googleEventId: "gone", sessionKey: "s-1", sessionDate: "2026-08-25", sessionEndTime: "19:30" }, timing);
+  assert.equal(missing, "missing");
+  assert.equal(isReconciledManagedEvent("deleted"), true);
+  assert.equal(isReconciledManagedEvent(missing), true);
+  assert.equal(isReconciledManagedEvent("unmanaged"), false);
+  assert.equal(isReconciledManagedEvent("not-future"), false);
 });
 
 test("409 insert dipulihkan hanya jika event deterministik memiliki metadata Planify yang sesuai", async () => {

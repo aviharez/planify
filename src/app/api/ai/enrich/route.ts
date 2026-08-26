@@ -50,18 +50,20 @@ export async function POST(request: Request) {
   if (!semester?.id) return NextResponse.json({ message: "Semester aktif belum tersedia." }, { status: 404 });
   const { data: plan } = await supabase
     .from("study_plans")
-    .select("id")
+    .select("id, semester_id")
     .eq("id", input.planId)
     .eq("user_id", authData.user.id)
     .eq("semester_id", semester.id)
+    .eq("status", "active")
     .maybeSingle();
-  if (!plan) return NextResponse.json({ message: "Rencana sesi tidak ditemukan." }, { status: 404 });
+  if (!plan || plan.semester_id !== semester.id) return NextResponse.json({ message: "Rencana sesi tidak ditemukan." }, { status: 404 });
   try {
     const result = await createGroqAiProvider().enrichStudySessions(input);
     const { data: storedSessions } = await supabase
       .from("study_sessions")
       .select("id, session_key")
       .eq("study_plan_id", input.planId)
+      .eq("semester_id", semester.id)
       .eq("user_id", authData.user.id)
       .in("session_key", result.sessions.map((session) => session.sessionKey));
     const ids = new Map((storedSessions ?? []).map((session) => [session.session_key, session.id]));

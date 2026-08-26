@@ -65,7 +65,7 @@ export function studySessionEvents(sessions: StudySession[]): PlanifyCalendarEve
 
 export function academicEventCalendarEvents(events: AcademicEvent[], courses: Course[]): PlanifyCalendarEvent[] {
   const names = new Map(courses.map((course) => [course.id, course.name]));
-  return events.filter((event) => event.date).map((event) => ({ id: `academic-${event.id}`, source: "planify", category: categoryForAcademicEvent(event.type), title: event.title || `${event.type}${names.get(event.courseId) ? ` · ${names.get(event.courseId)}` : ""}`, date: event.date, courseId: event.courseId, courseName: names.get(event.courseId), editable: true, details: event.notes || undefined }));
+  return events.filter((event) => event.date && names.has(event.courseId)).map((event) => ({ id: `academic-${event.id}`, source: "planify", category: categoryForAcademicEvent(event.type), title: event.title || `${event.type}${names.get(event.courseId) ? ` · ${names.get(event.courseId)}` : ""}`, date: event.date, courseId: event.courseId, courseName: names.get(event.courseId), editable: true, details: event.notes || undefined }));
 }
 
 function localDateTimeToUtc(localDateTime: string, timeZone: string) {

@@ -6,7 +6,8 @@ import { initialOnboardingData, type OnboardingData } from "@/features/onboardin
 import { onboardingDataSchema } from "@/features/onboarding/state";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { createNewSemesterSetup, nextSemesterName } from "@/features/semester/lifecycle";
-import { resolvePlanAcknowledgement } from "@/features/onboarding/lifecycle";
+import { resolvePlanAcknowledgement, validatePlanCourseOwnership } from "@/features/onboarding/lifecycle";
+import { syncCalendar } from "@/app/actions/calendar";
 
 async function context() {
   const supabase = await createSupabaseServerClient();
@@ -33,6 +34,10 @@ export async function finalizePlanPreview(input: unknown) {
   if (!setup.success || !setup.data.planActive || !setup.data.studyPlan) {
     return { ok: false as const, message: "Data rencana belum lengkap untuk disimpan." };
   }
+  const ownership = validatePlanCourseOwnership(setup.data, setup.data.studyPlan);
+  if (!ownership.ok) {
+    return { ok: false as const, message: `Rencana memuat mata kuliah yang bukan bagian dari semester aktif: ${ownership.courseIds.join(", ")}.` };
+  }
   if (!parsedInput.data.acknowledge && setup.data.previewAcknowledgedAt !== null) {
     return { ok: false as const, message: "Preview baru harus berstatus menunggu konfirmasi." };
   }
@@ -40,8 +45,11 @@ export async function finalizePlanPreview(input: unknown) {
   if (!supabase || !user) return { ok: true as const, acknowledgedAt: parsedInput.data.acknowledge ? new Date().toISOString() : null };
   const { data: semester } = await supabase.from("semesters").select("id").eq("user_id", user.id).eq("is_active", true).order("updated_at", { ascending: false }).limit(1).maybeSingle();
   if (!semester?.id) return { ok: false as const, message: "Semester aktif belum tersedia." };
-  const remotePlan = await supabase.from("study_plans").select("id, preview_acknowledged_at").eq("id", parsedInput.data.planId).eq("user_id", user.id).eq("semester_id", semester.id).eq("status", "active").maybeSingle();
-  if (remotePlan.error || !remotePlan.data?.id) return { ok: false as const, message: "Rencana remote belum tersedia. Coba simpan ulang." };
+  if (setup.data.semesterId !== semester.id) {
+    return { ok: false as const, message: "Data onboarding bukan milik semester aktif. Muat ulang halaman lalu coba lagi." };
+  }
+  const remotePlan = await supabase.from("study_plans").select("id, semester_id, preview_acknowledged_at").eq("id", parsedInput.data.planId).eq("user_id", user.id).eq("semester_id", semester.id).eq("status", "active").maybeSingle();
+  if (remotePlan.error || !remotePlan.data?.id || remotePlan.data.semester_id !== semester.id) return { ok: false as const, message: "Rencana remote belum tersedia. Coba simpan ulang." };
 
   let acknowledgedAt: string | null = null;
   if (parsedInput.data.acknowledge) {
@@ -71,9 +79,15 @@ export async function finalizePlanPreview(input: unknown) {
     .select("id")
     .maybeSingle();
   if (saved.error || !saved.data?.id) return { ok: false as const, message: "Data semester belum berhasil disimpan. Tetap di halaman ini dan coba lagi." };
+  let warning: string | undefined;
+  if (parsedInput.data.acknowledge) {
+    const calendar = await syncCalendar();
+    if (!calendar.ok && !calendar.message.includes("Sambungkan Google Calendar")) warning = calendar.message;
+  }
   revalidatePath("/");
   revalidatePath("/hari-ini");
-  return { ok: true as const, acknowledgedAt };
+  revalidatePath("/rencana");
+  return { ok: true as const, acknowledgedAt, warning };
 }
 
 export async function savePreferences(input: unknown) {
@@ -83,6 +97,7 @@ export async function savePreferences(input: unknown) {
   if (!supabase || !user) return { ok: true as const, message: "Preferensi tersimpan di perangkat ini." };
   const { data: semester } = await supabase.from("semesters").select("id").eq("user_id", user.id).eq("is_active", true).order("updated_at", { ascending: false }).limit(1).maybeSingle();
   if (!semester?.id) return { ok: false as const, message: "Semester aktif belum tersedia." };
+  if (parsed.data.semesterId !== semester.id) return { ok: false as const, message: "Preferensi bukan milik semester aktif. Muat ulang halaman lalu coba lagi." };
   const saved = await supabase.from("semesters").update({ setup_payload: parsed.data, onboarding_step: parsed.data.step, updated_at: new Date().toISOString() }).eq("id", semester.id).eq("user_id", user.id);
   if (saved.error) return { ok: false as const, message: "Preferensi belum berhasil disimpan." };
   revalidatePath("/profil");
@@ -100,13 +115,28 @@ export async function startNewSemester(reusePreferences = true) {
   const now = new Date();
   const name = nextSemesterName(active?.name, (semesters ?? []).map((semester) => semester.name), now.getFullYear());
   const fresh: OnboardingData = createNewSemesterSetup(previous, reusePreferences, name);
+  let setup: OnboardingData;
   try {
     const created = await supabase.rpc("start_new_semester", { p_name: name, p_setup_payload: fresh });
     if (created.error || !created.data) return { ok: false as const, message: "Semester baru belum berhasil dibuat." };
+    const semesterId = String(created.data);
+    const { data: createdSemester } = await supabase
+      .from("semesters")
+      .select("id, started_at")
+      .eq("id", semesterId)
+      .eq("user_id", user.id)
+      .eq("is_active", true)
+      .maybeSingle();
+    if (!createdSemester?.id) return { ok: false as const, message: "Semester baru belum berhasil dibaca ulang." };
+    setup = {
+      ...fresh,
+      semesterId: createdSemester.id,
+      semesterStartedAt: createdSemester.started_at,
+    };
   } catch {
     return { ok: false as const, message: "Semester baru belum berhasil dibuat." };
   }
   revalidatePath("/");
   revalidatePath("/profil");
-  return { ok: true as const, setup: fresh };
+  return { ok: true as const, setup };
 }

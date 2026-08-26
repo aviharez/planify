@@ -82,6 +82,10 @@ export type CourseEvaluation = {
 
 export type OnboardingData = {
   step: number;
+  /** Stable database identity for the semester represented by this payload. */
+  semesterId?: string;
+  /** Timestamp assigned when this semester becomes active. */
+  semesterStartedAt?: string;
   timezone: string;
   krsFileName: string;
   krsFileType: string;

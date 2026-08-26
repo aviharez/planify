@@ -23,6 +23,14 @@ test("recurrence dan batas tanggal tidak bergantung pada zona waktu mesin", () =
   assert.equal(events.some((event) => event.date < "2026-08-31"), false);
 });
 
+test("agenda Planify dari kursus semester lama tidak masuk kalender aktif", () => {
+  const events = combineCalendarEvents({
+    ...source,
+    academicEvents: [...source.academicEvents, { id: "old", courseId: "old-course", type: "UTS", title: "Ujian lama", date: "2026-08-26", importance: 5, notes: "" }],
+  }, { start: "2026-08-24", end: "2026-08-30" });
+  assert.equal(events.some((event) => event.title === "Ujian lama"), false);
+});
+
 test("overlay Google eksternal read-only dan acara Planify dikecualikan", () => {
   const external = mapGoogleEventToCalendarEvent({ id: "external", summary: "Rapat organisasi", start: { dateTime: "2026-08-26T15:00:00+07:00" }, end: { dateTime: "2026-08-26T16:00:00+07:00" } }, "Etc/GMT-7");
   assert.equal(external?.source, "google");

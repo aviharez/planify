@@ -5,7 +5,7 @@ import { onboardingDataSchema } from "@/features/onboarding/state";
 import type { StudySessionStatus } from "@/features/onboarding/types";
 import { decryptCalendarToken, encryptCalendarToken } from "@/features/calendar/crypto";
 import { refreshGoogleAccessToken } from "@/features/calendar/oauth";
-import { CalendarProviderError, GoogleCalendarProvider, removeManagedFutureEvent, syncManagedEvents, timeInTimeZone } from "@/features/calendar/provider";
+import { CalendarProviderError, GoogleCalendarProvider, isReconciledManagedEvent, removeManagedFutureEvent, syncManagedEvents, timeInTimeZone } from "@/features/calendar/provider";
 import { dateInTimeZone } from "@/features/planning/priority";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { calendarRangeToUtc, mapGoogleEventToCalendarEvent } from "@/features/calendar/transform";
@@ -30,7 +30,7 @@ export async function getCalendarStatus() {
   if (!supabase || !user) return { authenticated: false as const, configured: Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REDIRECT_URI && process.env.CALENDAR_TOKEN_ENCRYPTION_KEY), connected: false as const };
   const { data } = await supabase
     .from("calendar_connections")
-    .select("id, provider, calendar_id, account_email, status, last_synced_at, granted_scope")
+    .select("id, provider, calendar_id, account_email, status, last_synced_at, last_error, granted_scope")
     .eq("user_id", user.id)
     .eq("provider", "google")
     .maybeSingle();
@@ -41,6 +41,7 @@ export async function getCalendarStatus() {
     accountEmail: data?.account_email ?? undefined,
     status: data?.status ?? undefined,
     lastSyncedAt: data?.last_synced_at ?? undefined,
+    lastError: data?.last_error ?? undefined,
   };
 }
 
@@ -55,17 +56,33 @@ export async function syncCalendar(): Promise<CalendarActionResult> {
     .eq("provider", "google")
     .maybeSingle();
   if (!connection?.id) return { ok: false, message: "Sambungkan Google Calendar terlebih dahulu." };
-  const { data: semester } = await supabase.from("semesters").select("id, setup_payload").eq("user_id", user.id).eq("is_active", true).order("updated_at", { ascending: false }).limit(1).maybeSingle();
-  const setup = onboardingDataSchema.safeParse(semester?.setup_payload);
-  if (!setup.success || !setup.data.planActive) return { ok: false, message: "Rencana aktif belum tersedia untuk disinkronkan." };
-  const { data: plan } = await supabase.from("study_plans").select("id").eq("user_id", user.id).eq("semester_id", semester?.id ?? "").eq("status", "active").order("generated_at", { ascending: false }).limit(1).maybeSingle();
-  if (!plan?.id) return { ok: false, message: "Rencana belajar aktif belum tersedia." };
-  const { data: sessions } = await supabase.from("study_sessions").select("id, session_key, course_name, session_date, start_time, end_time, study_goal, status").eq("study_plan_id", plan.id).eq("user_id", user.id);
-  const { data: links } = await supabase.from("calendar_event_links").select("study_session_id, session_key, google_event_id, google_calendar_id").eq("connection_id", connection.id).eq("user_id", user.id);
+  const fail = async (message: string) => {
+    await supabase.from("calendar_connections").update({ status: "error", last_error: message, updated_at: new Date().toISOString() }).eq("id", connection.id).eq("user_id", user.id);
+    revalidatePath("/profil");
+    return { ok: false, message };
+  };
+  const { data: semester, error: semesterError } = await supabase.from("semesters").select("id, setup_payload").eq("user_id", user.id).eq("is_active", true).order("updated_at", { ascending: false }).limit(1).maybeSingle();
+  if (semesterError || !semester?.id) return fail("Semester aktif belum tersedia.");
+  const setup = onboardingDataSchema.safeParse(semester.setup_payload);
+  if (!setup.success || !setup.data.planActive || (setup.data.semesterId && setup.data.semesterId !== semester.id)) return fail("Rencana aktif belum tersedia untuk disinkronkan.");
+  const { data: plan, error: planError } = await supabase.from("study_plans").select("id, semester_id").eq("user_id", user.id).eq("semester_id", semester.id).eq("status", "active").order("generated_at", { ascending: false }).limit(1).maybeSingle();
+  if (planError || !plan?.id || plan.semester_id !== semester.id) return fail("Rencana belajar aktif belum tersedia.");
+  const { data: sessions, error: sessionsError } = await supabase.from("study_sessions").select("id, study_plan_id, semester_id, session_key, course_key, course_name, session_date, start_time, end_time, study_goal, status").eq("study_plan_id", plan.id).eq("semester_id", semester.id).eq("user_id", user.id);
+  if (sessionsError) return fail(calendarError());
+  const activeCourseIds = new Set(setup.data.courses.map((course) => course.id));
+  if ((sessions ?? []).some((session) => !activeCourseIds.has(session.course_key))) return fail("Sesi rencana tidak cocok dengan mata kuliah semester aktif.");
+  const { data: links, error: linksError } = await supabase.from("calendar_event_links").select("study_session_id, session_key, google_event_id, google_calendar_id").eq("connection_id", connection.id).eq("user_id", user.id);
+  if (linksError) return fail(calendarError());
   const linkedSessionIds = (links ?? []).map((link) => link.study_session_id);
-  const { data: linkedSessions } = linkedSessionIds.length ? await supabase.from("study_sessions").select("id, session_key, session_date, end_time").in("id", linkedSessionIds).eq("user_id", user.id) : { data: [] as Array<{ id: string; session_key: string; session_date: string; end_time: string }> };
+  const linkedSessionResult = linkedSessionIds.length ? await supabase.from("study_sessions").select("id, study_plan_id, semester_id, session_key, session_date, end_time").in("id", linkedSessionIds).eq("user_id", user.id) : { data: [] as Array<{ id: string; study_plan_id: string; semester_id: string; session_key: string; session_date: string; end_time: string }>, error: null };
+  if (linkedSessionResult.error) return fail(calendarError());
+  const linkedSessions = linkedSessionResult.data;
   const sessionDetails = new Map((linkedSessions ?? []).map((session) => [session.id, session]));
   const currentSessions = new Map((sessions ?? []).map((session) => [session.id, session]));
+  const validLinks = (links ?? []).filter((link) => {
+    const session = currentSessions.get(link.study_session_id) ?? sessionDetails.get(link.study_session_id);
+    return Boolean(session && session.session_key === link.session_key);
+  });
   let accessToken: string;
   let refreshedCiphertext: string | undefined;
   let refreshedExpiresIn = 3600;
@@ -73,7 +90,7 @@ export async function syncCalendar(): Promise<CalendarActionResult> {
     accessToken = decryptCalendarToken(connection.access_token_ciphertext);
     const expiresAt = connection.access_token_expires_at ? Date.parse(connection.access_token_expires_at) : 0;
     if (expiresAt <= Date.now() + 60_000) {
-      if (!connection.refresh_token_ciphertext) return { ok: false, message: "Sesi Google perlu disambungkan ulang." };
+      if (!connection.refresh_token_ciphertext) return fail("Sesi Google perlu disambungkan ulang.");
       const refreshToken = decryptCalendarToken(connection.refresh_token_ciphertext);
       const refreshed = await refreshGoogleAccessToken(refreshToken);
       accessToken = refreshed.access_token;
@@ -84,9 +101,9 @@ export async function syncCalendar(): Promise<CalendarActionResult> {
     const now = new Date();
     const result = await syncManagedEvents(provider, {
       sessions: (sessions ?? []).map((session) => ({ id: session.id, sessionKey: session.session_key, courseName: session.course_name, date: session.session_date, startTime: session.start_time.slice(0, 5), endTime: session.end_time.slice(0, 5), studyGoal: session.study_goal ?? undefined, status: session.status as StudySessionStatus })),
-      links: (links ?? []).map((link) => {
-        const session = currentSessions.get(link.study_session_id) ?? sessionDetails.get(link.study_session_id);
-        return { studySessionId: link.study_session_id, sessionKey: session?.session_key ?? "", googleEventId: link.google_event_id, googleCalendarId: link.google_calendar_id, sessionDate: session?.session_date, sessionEndTime: session?.end_time };
+      links: validLinks.map((link) => {
+        const session = currentSessions.get(link.study_session_id) ?? sessionDetails.get(link.study_session_id)!;
+        return { studySessionId: link.study_session_id, sessionKey: session.session_key, googleEventId: link.google_event_id, googleCalendarId: link.google_calendar_id, sessionDate: session.session_date, sessionEndTime: session.end_time };
       }),
       calendarId: connection.calendar_id,
       timeZone: setup.data.timezone,
@@ -101,7 +118,7 @@ export async function syncCalendar(): Promise<CalendarActionResult> {
       const saved = await supabase.from("calendar_event_links").update({ google_calendar_id: updated.calendarId, google_event_id: updated.eventId, synced_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("connection_id", connection.id).eq("study_session_id", updated.sessionId).eq("user_id", user.id);
       if (saved.error) throw new Error("Status tautan acara belum tersimpan.");
     }
-    for (const removed of result.deletes) {
+    for (const removed of result.deletes.filter((item) => isReconciledManagedEvent(item.outcome))) {
       const deleted = await supabase.from("calendar_event_links").delete().eq("connection_id", connection.id).eq("study_session_id", removed.linkId).eq("user_id", user.id);
       if (deleted.error) throw new Error("Tautan acara lama belum dihapus.");
     }
@@ -115,8 +132,7 @@ export async function syncCalendar(): Promise<CalendarActionResult> {
     revalidatePath("/profil");
     return { ok: true, message: "Google Calendar berhasil disinkronkan." };
   } catch {
-    await supabase.from("calendar_connections").update({ status: "error", last_error: "Sinkronisasi gagal", updated_at: new Date().toISOString() }).eq("id", connection.id).eq("user_id", user.id);
-    return { ok: false, message: calendarError() };
+    return fail(calendarError());
   }
 }
 

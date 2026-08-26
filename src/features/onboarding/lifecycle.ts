@@ -1,4 +1,4 @@
-import type { OnboardingData } from "./types";
+import type { OnboardingData, StudyPlan } from "./types";
 
 export type LifecycleState =
   | "setup-incomplete"
@@ -33,4 +33,22 @@ export function resolvePreviewAcknowledgement(
 /** Reuse an existing remote acknowledgement so a retry can finish setup persistence. */
 export function resolvePlanAcknowledgement(current: string | null | undefined, now: string) {
   return current ?? now;
+}
+
+/** Rejects sessions and priority factors that cross the active semester boundary. */
+export function validatePlanCourseOwnership(
+  data: Pick<OnboardingData, "courses" | "planningSnapshot">,
+  plan?: Pick<StudyPlan, "sessions" | "prioritySnapshot">,
+) {
+  if (!plan) return { ok: false as const, courseIds: [] as string[] };
+  const courseIds = new Set(data.courses.map((course) => course.id));
+  const referenced = [
+    ...plan.sessions.map((session) => session.courseId),
+    ...plan.prioritySnapshot.courseFactors.map((factor) => factor.courseId),
+    ...(data.planningSnapshot?.courseFactors.map((factor) => factor.courseId) ?? []),
+  ];
+  const invalid = [...new Set(referenced.filter((courseId) => !courseIds.has(courseId)))];
+  return invalid.length
+    ? { ok: false as const, courseIds: invalid }
+    : { ok: true as const, courseIds: [] as string[] };
 }

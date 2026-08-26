@@ -86,6 +86,34 @@ test("jadwal menghormati kelas, sesi tersimpan, batas harian, dan empat minggu",
   }
 });
 
+test("rencana awal dimulai dari batas aktivasi dan tidak membawa sesi lama", () => {
+  const oldSession: StudySession = {
+    id: "old-session",
+    sessionKey: "old-session",
+    courseId: "a",
+    courseName: "Algoritma",
+    date: "2026-08-25",
+    startTime: "19:00",
+    endTime: "19:45",
+    duration: 45,
+    status: "completed",
+    prioritySnapshot: { academicLoad: 0, knowledgeGap: 0, difficulty: 0, urgency: 0, adaptation: 0, score: 0 },
+  };
+  const plan = generateStudyPlan({
+    courses,
+    availability: [{ id: "wed", day: "Rabu", start: "18:00", end: "22:00" }],
+    classSchedules: {},
+    focusPeriods: ["Malam"],
+    focusDuration: 45,
+    activityDensity: "Seimbang",
+    academicEvents: [],
+    snapshot: buildPlanningSnapshot({ courses, evaluations: {}, academicEvents: [], availability: [] }, { today: "2026-08-26" }),
+    today: "2026-08-26",
+  });
+  assert.equal(plan.planningPeriod.start, "2026-08-26");
+  assert.equal(plan.sessions.some((session) => session.id === oldSession.id || session.date < "2026-08-26"), false);
+});
+
 test("setiap mata kuliah mendapat baseline dan prioritas mengatur waktu tambahan", () => {
   const manyCourses: Course[] = ["Algoritma", "Basis Data", "Sistem Operasi", "Jaringan", "Statistika"].map((name, index) => ({ id: `course-${index}`, name, credits: 3 }));
   const manySnapshot = buildPlanningSnapshot({

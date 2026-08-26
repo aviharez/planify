@@ -50,7 +50,7 @@ import {
   onboardingDataSchema,
   previousStep,
 } from "./state";
-import { resolveLifecycle, resolvePreviewAcknowledgement } from "./lifecycle";
+import { resolveLifecycle, resolvePreviewAcknowledgement, validatePlanCourseOwnership } from "./lifecycle";
 import { finalizePlanPreview } from "@/app/actions/lifecycle";
 import CalendarView from "@/features/calendar/CalendarView";
 import { calendarRangeForPlan, combineCalendarEvents } from "@/features/calendar/transform";
@@ -477,22 +477,53 @@ function StepHeader({ data }: { data: OnboardingData }) {
 
 type BrowserSupabase = ReturnType<typeof createSupabaseBrowserClient>;
 
+async function getActiveSemester(
+  supabase: NonNullable<BrowserSupabase>,
+  userId: string,
+  semesterId?: string,
+) {
+  let query = supabase
+    .from("semesters")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("is_active", true);
+  if (semesterId) query = query.eq("id", semesterId);
+  return query.order("updated_at", { ascending: false }).limit(1).maybeSingle();
+}
+
+type RemotePlanIdentity = { id: string; preview_acknowledged_at: string | null } | null | undefined;
+
+function hydrateSemesterSetup(
+  remoteSetup: OnboardingData | null,
+  semester: { id: string; started_at?: string | null } | null | undefined,
+  remotePlan: RemotePlanIdentity,
+  timezone: string,
+): OnboardingData {
+  const ownsSetup = Boolean(remoteSetup && semester && (!remoteSetup.semesterId || remoteSetup.semesterId === semester.id));
+  const planMatches = Boolean(remotePlan?.id && remoteSetup?.studyPlan && (!remoteSetup.studyPlan.remoteId || remoteSetup.studyPlan.remoteId === remotePlan.id));
+  if (!ownsSetup || !semester || !remoteSetup) return { ...initialOnboardingData, semesterId: semester?.id, semesterStartedAt: semester?.started_at ?? undefined, timezone };
+  return {
+    ...remoteSetup,
+    semesterId: semester.id,
+    semesterStartedAt: semester.started_at ?? remoteSetup.semesterStartedAt,
+    timezone,
+    planningSnapshot: planMatches ? remoteSetup.planningSnapshot : undefined,
+    studyPlan: planMatches ? remoteSetup.studyPlan : undefined,
+    previewAcknowledgedAt: planMatches ? resolvePreviewAcknowledgement(remoteSetup.previewAcknowledgedAt, remotePlan?.preview_acknowledged_at) : null,
+    planActive: Boolean(planMatches && remoteSetup.planActive),
+  };
+}
+
 async function storeKrsDocument(
   supabase: BrowserSupabase,
   file: File,
   extraction: Awaited<ReturnType<typeof extractKrsFile>>,
+  semesterId?: string,
 ) {
   if (!supabase) return { warning: "" };
   const { data: authData } = await supabase.auth.getUser();
   if (!authData.user) return { warning: "" };
-  const { data: semester } = await supabase
-    .from("semesters")
-    .select("id")
-    .eq("user_id", authData.user.id)
-    .eq("is_active", true)
-    .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const { data: semester } = await getActiveSemester(supabase, authData.user.id, semesterId);
   if (!semester?.id)
     return { warning: "Berkas belum disimpan karena semester aktif belum tersedia. Hasil baca tetap aman." };
   const safeName = file.name.replace(/[^a-zA-Z0-9._-]+/g, "-");
@@ -541,18 +572,12 @@ async function storeKrsDocument(
 async function storePlanningSnapshot(
   supabase: BrowserSupabase,
   snapshot: NonNullable<OnboardingData["planningSnapshot"]>,
+  semesterId?: string,
 ) {
   if (!supabase) return "";
   const { data: authData } = await supabase.auth.getUser();
   if (!authData.user) return "";
-  const { data: semester } = await supabase
-    .from("semesters")
-    .select("id")
-    .eq("user_id", authData.user.id)
-    .eq("is_active", true)
-    .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const { data: semester } = await getActiveSemester(supabase, authData.user.id, semesterId);
   if (!semester?.id) return "Snapshot belum tersimpan karena semester aktif belum tersedia.";
   const result = await supabase.from("planning_snapshots").insert({
     user_id: authData.user.id,
@@ -571,61 +596,26 @@ async function storePlanningSnapshot(
 async function storeStudyPlan(
   supabase: BrowserSupabase,
   plan: StudyPlan,
+  setupInput: OnboardingData,
+  semesterId?: string,
 ) {
   if (!supabase) return { warning: "" };
+  const setup = onboardingDataSchema.safeParse(setupInput);
+  if (!setup.success) return { warning: "Rencana tersusun, tetapi data semester belum valid untuk disimpan." };
   const { data: authData } = await supabase.auth.getUser();
   if (!authData.user) return { warning: "" };
-  const { data: semester } = await supabase
-    .from("semesters")
-    .select("id")
-    .eq("user_id", authData.user.id)
-    .eq("is_active", true)
-    .order("updated_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
+  const { data: semester } = await getActiveSemester(supabase, authData.user.id, semesterId);
   if (!semester?.id)
     return { warning: "Rencana tersimpan di perangkat, tetapi semester aktif belum tersedia untuk penyimpanan akun." };
-  const inserted = await supabase
-    .from("study_plans")
-    .insert({
-      user_id: authData.user.id,
-      semester_id: semester.id,
-      priority_snapshot: plan.prioritySnapshot,
-      capacity_policy: plan.capacityPolicy,
-      weekly_capacity_minutes: plan.weeklyCapacityMinutes,
-      planning_period_start: plan.planningPeriod.start,
-      planning_period_end: plan.planningPeriod.end,
-      generated_at: plan.generatedAt,
-      preview_acknowledged_at: null,
-    })
-    .select("id")
-    .single();
-  if (inserted.error || !inserted.data?.id)
+  const stored = await supabase.rpc("replace_active_study_plan", {
+    p_semester_id: semester.id,
+    p_plan: plan,
+    p_setup_payload: setup.data,
+    p_source_plan_id: null,
+  });
+  if (stored.error || !stored.data)
     return { warning: "Rencana tersusun, tetapi belum berhasil disimpan ke akun. Data lokal tetap aman." };
-  const sessions = plan.sessions.map((session) => ({
-    study_plan_id: inserted.data.id,
-    user_id: authData.user.id,
-    semester_id: semester.id,
-    course_key: session.courseId,
-    course_name: session.courseName,
-    session_key: session.sessionKey,
-    session_date: session.date,
-    start_time: session.startTime,
-    end_time: session.endTime,
-    duration_minutes: session.duration,
-    status: session.status,
-    priority_snapshot: session.prioritySnapshot,
-    study_method: session.studyMethod ?? null,
-    study_goal: session.studyGoal ?? null,
-    explanation: session.explanation ?? null,
-    completed_at: session.completedAt ?? null,
-  }));
-  if (sessions.length) {
-    const result = await supabase.from("study_sessions").insert(sessions);
-    if (result.error)
-      return { warning: "Rencana tersusun, tetapi sesi belum berhasil disimpan ke akun. Data lokal tetap aman." };
-  }
-  return { remoteId: inserted.data.id, warning: "" };
+  return { remoteId: stored.data, warning: "" };
 }
 
 function KrsStep({
@@ -689,7 +679,7 @@ function KrsStep({
       let storage: Awaited<ReturnType<typeof storeKrsDocument>> = { warning: "" };
       if (authenticated && supabase) {
         try {
-          storage = await storeKrsDocument(supabase, file, extraction);
+          storage = await storeKrsDocument(supabase, file, extraction, data.semesterId);
         } catch {
           storage = {
             warning: "Hasil sudah terbaca, tetapi berkas asli belum berhasil disimpan. Kamu bisa mencobanya lagi nanti.",
@@ -2055,7 +2045,7 @@ export default function OnboardingApp() {
 
       const { data: semester } = await supabase
         .from("semesters")
-        .select("id, setup_payload")
+        .select("id, setup_payload, started_at")
         .eq("user_id", sessionData.session.user.id)
         .eq("is_active", true)
         .order("updated_at", { ascending: false })
@@ -2073,10 +2063,8 @@ export default function OnboardingApp() {
         ? await supabase.from("study_plans").select("id, preview_acknowledged_at").eq("user_id", sessionData.session.user.id).eq("semester_id", semester.id).eq("status", "active").order("generated_at", { ascending: false }).limit(1).maybeSingle()
         : { data: null };
       if (!cancelled) {
-        const nextData = remoteSetup
-          ? { ...remoteSetup, timezone, previewAcknowledgedAt: resolvePreviewAcknowledgement(remoteSetup.previewAcknowledgedAt, remotePlan?.preview_acknowledged_at), planActive: Boolean(remoteSetup.planActive && remoteSetup.studyPlan) }
-          : { ...initialOnboardingData, timezone };
-        if (resolveLifecycle(nextData) === "active-use") {
+        const nextData = hydrateSemesterSetup(remoteSetup, semester, remotePlan, timezone);
+        if (remotePlan?.id && resolveLifecycle(nextData) === "active-use") {
           window.location.replace("/hari-ini");
           return;
         }
@@ -2120,7 +2108,7 @@ export default function OnboardingApp() {
     if (!authData.user) return;
     const { data: semester } = await supabase
       .from("semesters")
-      .select("id, setup_payload")
+      .select("id, setup_payload, started_at")
       .eq("user_id", authData.user.id)
       .eq("is_active", true)
       .order("updated_at", { ascending: false })
@@ -2138,10 +2126,8 @@ export default function OnboardingApp() {
     const { data: remotePlan } = semester?.id
       ? await supabase.from("study_plans").select("id, preview_acknowledged_at").eq("user_id", authData.user.id).eq("semester_id", semester.id).eq("status", "active").order("generated_at", { ascending: false }).limit(1).maybeSingle()
       : { data: null };
-    const nextData = remoteSetup
-      ? { ...remoteSetup, timezone, previewAcknowledgedAt: resolvePreviewAcknowledgement(remoteSetup.previewAcknowledgedAt, remotePlan?.preview_acknowledged_at), planActive: Boolean(remoteSetup.planActive && remoteSetup.studyPlan) }
-      : { ...initialOnboardingData, timezone };
-    if (resolveLifecycle(nextData) === "active-use") {
+    const nextData = hydrateSemesterSetup(remoteSetup, semester, remotePlan, timezone);
+    if (remotePlan?.id && resolveLifecycle(nextData) === "active-use") {
       window.location.replace("/hari-ini");
       return;
     }
@@ -2179,7 +2165,11 @@ export default function OnboardingApp() {
     setGenerationStatus("processing");
     setPersistenceReady(false);
     const today = dateInTimeZone(new Date(), data.timezone);
-    const snapshot = buildPlanningSnapshot(data, { today });
+    const activationDate = data.semesterStartedAt
+      ? dateInTimeZone(new Date(data.semesterStartedAt), data.timezone)
+      : today;
+    const planningStart = /^\d{4}-\d{2}-\d{2}$/.test(activationDate) ? activationDate : today;
+    const snapshot = buildPlanningSnapshot(data, { today: planningStart });
     const generatedPlan = generateStudyPlan({
       courses: data.courses,
       availability: data.availability,
@@ -2190,7 +2180,7 @@ export default function OnboardingApp() {
       procrastination: data.procrastination,
       academicEvents: data.academicEvents,
       snapshot,
-      today,
+      today: planningStart,
     });
     const plan: StudyPlan = {
       ...generatedPlan,
@@ -2199,6 +2189,16 @@ export default function OnboardingApp() {
         fallbackEnrichments(generatedPlan.sessions),
       ),
     };
+    const ownership = validatePlanCourseOwnership({ courses: data.courses, planningSnapshot: snapshot }, {
+      sessions: plan.sessions,
+      prioritySnapshot: snapshot,
+    });
+    if (!ownership.ok) {
+      setGenerationStatus("ready");
+      setGenerationWarning(`Rencana memuat mata kuliah yang bukan bagian dari semester aktif: ${ownership.courseIds.join(", ")}.`);
+      setGenerationReady(false);
+      return;
+    }
     let persistedPlan = plan;
     setData((current) => ({
       ...current,
@@ -2213,11 +2213,17 @@ export default function OnboardingApp() {
     setPersistenceReady(!authenticated);
     if (authenticated && supabase) {
       try {
-        const snapshotWarning = await storePlanningSnapshot(supabase, snapshot);
+        const snapshotWarning = await storePlanningSnapshot(supabase, snapshot, data.semesterId);
         if (snapshotWarning) {
           warning = snapshotWarning;
         } else {
-          const storedPlan = await storeStudyPlan(supabase, plan);
+          const storedPlan = await storeStudyPlan(supabase, plan, {
+            ...data,
+            planActive: true,
+            previewAcknowledgedAt: null,
+            planningSnapshot: snapshot,
+            studyPlan: plan,
+          }, data.semesterId);
           warning = storedPlan.warning;
           remotePlanId = storedPlan.remoteId;
           if (remotePlanId) {
@@ -2312,6 +2318,7 @@ export default function OnboardingApp() {
       return;
     }
     const setup = { ...data, previewAcknowledgedAt: result.acknowledgedAt };
+    if (result.warning) setGenerationWarning(result.warning);
     setData(setup);
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(setup));
     window.location.replace("/hari-ini");
